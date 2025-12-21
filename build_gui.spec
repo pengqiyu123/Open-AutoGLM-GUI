@@ -4,10 +4,13 @@ block_cipher = None
 
 a = Analysis(
     ['gui_app.py'],
-    pathex=[],
+    pathex=['.'],
     binaries=[],
     datas=[
         ('使用必读.txt', '.'),
+        ('resources', 'resources'),
+        ('gui', 'gui'),
+        ('phone_agent', 'phone_agent'),
     ],
     hiddenimports=[
         'PyQt5.QtCore',
@@ -45,7 +48,7 @@ a = Analysis(
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
-    collect_submodules=False,  # 不收集所有子模块，加快速度
+    collect_submodules=True,
     cipher=block_cipher,
     noarchive=False,
 )
@@ -72,6 +75,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon='resources/LOG.ico',
 )
 

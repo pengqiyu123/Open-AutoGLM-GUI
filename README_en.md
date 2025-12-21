@@ -6,7 +6,7 @@
 <img src=resources/logo.svg width="20%"/>
 </div>
 <p align="center">
-    👋 Join our <a href="resources/WECHAT.md" target="_blank">WeChat</a> and <a href="https://discord.gg/QR7SARHRxK" target="_blank">Discord</a> communities
+    👋 Join our <a href="https://discord.gg/QR7SARHRxK" target="_blank">Discord</a> community
 </p>
 
 ## Project Introduction

@@ -1,17 +1,34 @@
 """Main PhoneAgent class for orchestrating phone automation."""
 
+import base64
 import json
+import os
+import sys
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
 from phone_agent.actions import ActionHandler
 from phone_agent.actions.handler import do, finish, parse_action
 from phone_agent.adb import get_current_app, get_screenshot
+from phone_agent.adb.screenshot import Screenshot
 from phone_agent.config import get_messages, get_system_prompt
 from phone_agent.model import ModelClient, ModelConfig
 from phone_agent.model.client import MessageBuilder
+from phone_agent.device_manager import DeviceManager, DeviceMode
+
+
+def _get_logs_dir() -> Path:
+    """Get the logs directory path (always in Open-AutoGLM-main/)."""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled exe (dist/GUI.exe)
+        # Go up from dist/ to Open-AutoGLM-main/
+        return Path(sys.executable).parent.parent / "logs"
+    else:
+        # Running as script
+        return Path("logs")
 
 
 @dataclass
@@ -27,6 +44,7 @@ class AgentConfig:
     log_file: str | None = None
     gui_mode: bool = False  # GUI模式，禁用终端输出
     thinking_callback: Callable[[str], None] | None = None  # 实时thinking回调
+    device_mode: str = "android"  # 设备模式: "android" (ADB) 或 "harmonyos" (HDC)
 
     def __post_init__(self):
         if self.system_prompt is None:
@@ -42,6 +60,7 @@ class StepResult:
     action: dict[str, Any] | None
     thinking: str
     message: str | None = None
+    screenshot_path: str | None = None  # Path to saved screenshot file
 
 
 class PhoneAgent:
@@ -78,12 +97,21 @@ class PhoneAgent:
 
         self.model_client = ModelClient(self.model_config)
         self._logger = self._create_logger(self.agent_config.log_file)
+        
+        # Initialize device manager based on device mode
+        device_mode = DeviceMode.HARMONYOS if self.agent_config.device_mode == "harmonyos" else DeviceMode.ANDROID
+        self.device_manager = DeviceManager(
+            mode=device_mode,
+            device_id=self.agent_config.device_id,
+        )
+        
         self.action_handler = ActionHandler(
             device_id=self.agent_config.device_id,
             confirmation_callback=confirmation_callback,
             takeover_callback=takeover_callback,
             notifier=self._create_notifier() if self.agent_config.notify else None,
             logger=self._log,
+            device_manager=self.device_manager,  # Pass device manager for HarmonyOS support
         )
 
         self._context: list[dict[str, Any]] = []
@@ -147,15 +175,34 @@ class PhoneAgent:
         """Execute a single step of the agent loop."""
         self._step_count += 1
 
-        # Capture current screen state
-        screenshot = get_screenshot(self.agent_config.device_id)
-        current_app = get_current_app(self.agent_config.device_id)
+        # Capture current screen state using device manager (supports both ADB and HDC)
+        screenshot = self.device_manager.get_screenshot()
+        current_app = self.device_manager.get_current_app()
+        
+        # Save screenshot to file for logging
+        screenshot_path = self._save_screenshot(screenshot)
+        
+        # Handle sensitive screen (FLAG_SECURE apps like banking, payment)
+        if screenshot.is_sensitive:
+            return StepResult(
+                success=False,
+                finished=True,
+                action={"action": "Take_over", "message": "检测到敏感屏幕（可能是支付、银行或密码页面），无法截图。请手动处理后重试。", "_metadata": "finish"},
+                thinking="截图失败，检测到敏感屏幕。应用设置了 FLAG_SECURE 防止截图。",
+                message="敏感屏幕，需要用户手动处理",
+                screenshot_path=screenshot_path,
+            )
 
         # Build messages
         if is_first:
-            self._context.append(
-                MessageBuilder.create_system_message(self.agent_config.system_prompt)
+            # 检查是否已经有系统消息（可能是预注入的经验上下文）
+            has_system_message = any(
+                msg.get('role') == 'system' for msg in self._context
             )
+            if not has_system_message:
+                self._context.append(
+                    MessageBuilder.create_system_message(self.agent_config.system_prompt)
+                )
 
             screen_info = MessageBuilder.build_screen_info(current_app)
             text_content = f"{user_prompt}\n\n{screen_info}"
@@ -226,7 +273,7 @@ class PhoneAgent:
                     # Fallback: process synchronously if async failed
                     response = self.model_client.request(self._context)
             else:
-            response = self.model_client.request(self._context)
+                response = self.model_client.request(self._context)
         except Exception as e:
             error_msg = str(e)
             if self.agent_config.verbose and not self.agent_config.gui_mode:
@@ -239,6 +286,7 @@ class PhoneAgent:
                 action=None,
                 thinking="",
                 message=error_msg,
+                screenshot_path=screenshot_path,
             )
 
         # Parse action from response
@@ -307,6 +355,7 @@ class PhoneAgent:
             action=action,
             thinking=response.thinking,
             message=result.message or action.get("message"),
+            screenshot_path=screenshot_path,
         )
 
     def _create_notifier(self):
@@ -332,6 +381,36 @@ class PhoneAgent:
     def _log(self, message: str) -> None:
         if self._logger:
             self._logger(message)
+    
+    def _save_screenshot(self, screenshot: Screenshot) -> str | None:
+        """
+        Save screenshot to file system for logging.
+        
+        Args:
+            screenshot: Screenshot object containing base64 data
+            
+        Returns:
+            Path to saved screenshot file, or None if save failed
+        """
+        try:
+            # Create screenshots directory in logs folder
+            screenshots_dir = _get_logs_dir() / "screenshots"
+            screenshots_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate filename with timestamp and step number
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"step_{self._step_count}_{timestamp}.png"
+            filepath = screenshots_dir / filename
+            
+            # Decode base64 and save to file
+            image_data = base64.b64decode(screenshot.base64_data)
+            with open(filepath, 'wb') as f:
+                f.write(image_data)
+            
+            return str(filepath)
+        except Exception as e:
+            print(f"Failed to save screenshot: {e}")
+            return None
 
     @property
     def context(self) -> list[dict[str, Any]]:

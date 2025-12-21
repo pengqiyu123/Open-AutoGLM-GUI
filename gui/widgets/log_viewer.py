@@ -28,6 +28,12 @@ class LogViewer(QWidget):
         "system": QColor(150, 150, 255),  # Light purple
         "default": QColor(255, 255, 255),  # White
     }
+    
+    # Maximum number of lines to keep in log (prevent memory issues)
+    MAX_LOG_LINES = 10000
+    
+    # Batch update settings for better performance
+    BATCH_UPDATE_INTERVAL_MS = 50  # Update UI every 50ms max
 
     def __init__(self, parent=None):
         """Initialize the log viewer."""
@@ -36,6 +42,12 @@ class LogViewer(QWidget):
         self._setup_ui()
         self._auto_scroll = True
         self._current_thinking_active = False  # Track if we're in a thinking stream
+        self._line_count = 0  # Track number of lines
+        
+        # Batch update buffer for better performance
+        self._pending_logs = []  # List of (text, log_type) tuples
+        self._batch_timer = None
+        self._setup_batch_timer()
 
     def _setup_ui(self):
         """Set up the UI components."""
@@ -74,6 +86,49 @@ class LogViewer(QWidget):
         control_layout.addStretch()
         control_layout.addWidget(self.auto_scroll_btn)
         layout.addLayout(control_layout)
+    
+    def _setup_batch_timer(self):
+        """Set up timer for batch UI updates."""
+        from PyQt5.QtCore import QTimer
+        self._batch_timer = QTimer(self)
+        self._batch_timer.timeout.connect(self._flush_pending_logs)
+        self._batch_timer.start(self.BATCH_UPDATE_INTERVAL_MS)
+    
+    def _queue_log(self, text: str, log_type: str):
+        """Queue a log entry for batch update."""
+        self._pending_logs.append((text, log_type))
+    
+    def _flush_pending_logs(self):
+        """Flush all pending logs to the UI."""
+        if not self._pending_logs:
+            return
+        
+        # Process all pending logs at once
+        logs_to_process = self._pending_logs
+        self._pending_logs = []
+        
+        cursor = self.text_edit.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        
+        # Batch insert all logs
+        for text, log_type in logs_to_process:
+            # Update line count
+            self._line_count += text.count('\n')
+            
+            # Set color format
+            format = QTextCharFormat()
+            color = self.COLORS.get(log_type, self.COLORS["default"])
+            format.setForeground(color)
+            cursor.setCharFormat(format)
+            cursor.insertText(text)
+        
+        # Check if we need to trim
+        if self._line_count > self.MAX_LOG_LINES:
+            self._trim_old_logs()
+        
+        # Auto-scroll if enabled (only once after all logs)
+        if self._auto_scroll:
+            self.text_edit.ensureCursorVisible()
 
     def _toggle_auto_scroll(self):
         """Toggle auto-scroll mode."""
@@ -111,26 +166,39 @@ class LogViewer(QWidget):
         self.search_input.clear()
 
     def _append_text(self, text: str, log_type: str = "default"):
-        """Append text with specified log type color."""
-        cursor = self.text_edit.textCursor()
-        cursor.movePosition(QTextCursor.End)
-
-        # Set color format
-        format = QTextCharFormat()
-        color = self.COLORS.get(log_type, self.COLORS["default"])
-        format.setForeground(color)
-        cursor.setCharFormat(format)
-
-        # Append text
-        cursor.insertText(text)
-
-        # Auto-scroll if enabled
-        if self._auto_scroll:
-            self.text_edit.ensureCursorVisible()
+        """Append text with specified log type color.
         
-        # Force immediate UI update for real-time display
-        from PyQt5.QtWidgets import QApplication
-        QApplication.processEvents()
+        Uses batch update for better performance - logs are queued and
+        flushed to UI periodically instead of immediately.
+        """
+        # Queue for batch update (non-blocking)
+        self._queue_log(text, log_type)
+    
+    def _trim_old_logs(self):
+        """Trim old logs to prevent memory issues."""
+        try:
+            # Remove first 20% of logs when limit is reached
+            lines_to_remove = self.MAX_LOG_LINES // 5
+            
+            cursor = self.text_edit.textCursor()
+            cursor.movePosition(QTextCursor.Start)
+            
+            # Move to the line we want to keep
+            for _ in range(lines_to_remove):
+                cursor.movePosition(QTextCursor.Down)
+            
+            # Select and delete old content
+            cursor.movePosition(QTextCursor.Start, QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+            
+            # Update line count
+            self._line_count = self.text_edit.document().lineCount()
+            
+            # Add a marker that logs were trimmed
+            self.log_system("--- 旧日志已清理以节省内存 ---")
+        except Exception:
+            # If trimming fails, just reset line count
+            self._line_count = self.text_edit.document().lineCount()
 
     def log_thinking(self, message: str, is_incremental: bool = False):
         """
@@ -188,6 +256,7 @@ class LogViewer(QWidget):
         """Clear all logs."""
         self.text_edit.clear()
         self._current_thinking_active = False
+        self._line_count = 0
 
     def get_text(self) -> str:
         """Get all log text."""

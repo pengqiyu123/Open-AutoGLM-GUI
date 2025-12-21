@@ -75,5 +75,7 @@ REMEMBER:
 - Think before you act: Always analyze the current UI and the best course of action before executing any step, and output in <think> part.
 - Only ONE LINE of action in <answer> part per response: Each step must contain exactly one line of executable code.
 - Generate execution code strictly according to format requirements.
+- About ads: When you see a startup ad or splash screen ad, DO NOT click the "Skip" button. Ads usually disappear automatically within a few seconds. By the time you decide to click skip, the ad may have already disappeared, and your click will accidentally tap on the app content behind it. The correct approach is to use Wait for the ad to disappear automatically, e.g., do(action="Wait", duration="3 seconds").
+- About sensitive screens: DO NOT assume the current screen is a sensitive screen (payment page, password input, etc.) unless you actually see a completely BLACK screenshot. If the screenshot shows normal UI content, proceed with the task normally and DO NOT use Take_over action. Only when the screenshot is completely black does it indicate the app has FLAG_SECURE protection, and only then should you request user takeover.
 """
 )

@@ -1,15 +1,77 @@
 #!/usr/bin/env python3
 """GUI application entry point for Open-AutoGLM."""
 
+import os
+import shutil
 import sys
+from pathlib import Path
 
-from PyQt5.QtWidgets import QApplication
 
-from gui.main_window import MainWindow
+def setup_tool_paths():
+    """
+    检测并配置 ADB 和 HDC 工具路径。
+    如果系统 PATH 中找不到这些工具，则自动添加本地目录到 PATH。
+    """
+    # 获取程序所在目录（支持打包后的 exe）
+    if getattr(sys, 'frozen', False):
+        # 打包后的 exe
+        app_dir = Path(sys.executable).parent
+    else:
+        # 开发环境
+        app_dir = Path(__file__).parent
+    
+    # 向上查找项目根目录（包含 toolchains 和 platform-tools 的目录）
+    search_dirs = [
+        app_dir,
+        app_dir.parent,
+        app_dir.parent.parent,
+        Path("D:/python/Open-AutoGLM"),  # 硬编码的备用路径
+    ]
+    
+    paths_to_add = []
+    
+    # 检测 ADB
+    adb_found = shutil.which("adb") is not None
+    if not adb_found:
+        for search_dir in search_dirs:
+            platform_tools = search_dir / "platform-tools"
+            if platform_tools.exists() and (platform_tools / "adb.exe").exists():
+                paths_to_add.append(str(platform_tools))
+                print(f"[PATH] 添加 ADB 路径: {platform_tools}")
+                break
+    else:
+        print(f"[PATH] ADB 已在系统 PATH 中")
+    
+    # 检测 HDC
+    hdc_found = shutil.which("hdc") is not None
+    if not hdc_found:
+        for search_dir in search_dirs:
+            toolchains = search_dir / "toolchains"
+            if toolchains.exists() and (toolchains / "hdc.exe").exists():
+                paths_to_add.append(str(toolchains))
+                print(f"[PATH] 添加 HDC 路径: {toolchains}")
+                break
+    else:
+        print(f"[PATH] HDC 已在系统 PATH 中")
+    
+    # 添加到当前进程的 PATH
+    if paths_to_add:
+        current_path = os.environ.get("PATH", "")
+        new_paths = ";".join(paths_to_add)
+        os.environ["PATH"] = f"{new_paths};{current_path}"
+        print(f"[PATH] 环境变量已更新")
+    
+    return adb_found or bool(paths_to_add), hdc_found or bool(paths_to_add)
 
 
 def main():
     """Main entry point for the GUI application."""
+    # 先配置工具路径
+    setup_tool_paths()
+    
+    from PyQt5.QtWidgets import QApplication
+    from gui.main_window import MainWindow
+    
     app = QApplication(sys.argv)
     app.setApplicationName("Open-AutoGLM GUI")
     app.setOrganizationName("Open-AutoGLM GUI")

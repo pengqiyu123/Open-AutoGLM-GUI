@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
-from openai import OpenAI
+import requests
+from openai import OpenAI, DefaultHttpxClient
 
 from phone_agent.adb import list_devices
 
@@ -19,6 +20,100 @@ class CheckResult:
     message: str
     details: Optional[str] = None
     solution: Optional[str] = None
+
+
+def check_hdc_installation() -> CheckResult:
+    """
+    Check if HDC is installed and accessible (for HarmonyOS).
+
+    Returns:
+        CheckResult with status and message.
+    """
+    import os
+    
+    # Try to find HDC in PATH
+    hdc_path = shutil.which("hdc")
+    if not hdc_path:
+        # Try common HDC installation paths on Windows
+        username = os.getenv("USERNAME", "")
+        common_paths = [
+            # Open-AutoGLM bundled HDC (recommended)
+            r"D:\python\Open-AutoGLM\toolchains\hdc.exe",
+            r".\toolchains\hdc.exe",
+            r"toolchains\hdc.exe",
+            # DevEco Studio default paths
+            r"D:\HuaWei\Sdk\20\toolchains\hdc.exe",
+            r"C:\HuaWei\Sdk\20\toolchains\hdc.exe",
+            # User-specific paths
+            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\ohos\base\toolchains\hdc.exe",
+            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\10\toolchains\hdc.exe",
+            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\11\toolchains\hdc.exe",
+            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\12\toolchains\hdc.exe",
+            # Program Files paths
+            r"C:\Program Files\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
+            r"C:\Program Files (x86)\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
+            # Custom SDK paths
+            r"D:\DevEcoStudio\sdk\openharmony\toolchains\hdc.exe",
+            r"E:\HuaWei\Sdk\openharmony\toolchains\hdc.exe",
+        ]
+        for path in common_paths:
+            if os.path.exists(path):
+                hdc_path = path
+                break
+    
+    if not hdc_path:
+        return CheckResult(
+            success=False,
+            message="HDC 未安装或不在 PATH 中",
+            details="HDC is not installed or not in PATH.",
+            solution="安装 HarmonyOS SDK:\n"
+            "1. 下载并安装 DevEco Studio\n"
+            "2. 或从 https://developer.huawei.com/consumer/cn/deveco-studio/ 下载\n"
+            "3. HDC 工具通常位于 SDK 的 toolchains 目录下\n"
+            "4. 将 HDC 路径添加到系统 PATH 环境变量",
+        )
+
+    try:
+        result = subprocess.run(
+            [hdc_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            version_line = result.stdout.strip().split("\n")[0] if result.stdout.strip() else "HDC 已安装"
+            return CheckResult(
+                success=True, message=f"HDC 已安装 ({version_line})", details=version_line
+            )
+        else:
+            # Try alternative: just list targets
+            result2 = subprocess.run(
+                [hdc_path, "list", "targets"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result2.returncode == 0:
+                return CheckResult(
+                    success=True, message="HDC 已安装", details="HDC is available"
+                )
+            return CheckResult(
+                success=False,
+                message="HDC 命令执行失败",
+                details="HDC command failed to run.",
+            )
+    except FileNotFoundError:
+        return CheckResult(
+            success=False, message="HDC 命令未找到", details="HDC command not found."
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            success=False, message="HDC 命令超时", details="HDC command timed out."
+        )
+    except Exception as e:
+        return CheckResult(
+            success=False, message=f"HDC 检查出错: {e}", details=str(e)
+        )
 
 
 def check_adb_installation() -> CheckResult:
@@ -65,6 +160,94 @@ def check_adb_installation() -> CheckResult:
     except Exception as e:
         return CheckResult(
             success=False, message=f"ADB 检查出错: {e}", details=str(e)
+        )
+
+
+def check_hdc_devices() -> CheckResult:
+    """
+    Check if any HarmonyOS devices are connected using HDC.
+
+    Returns:
+        CheckResult with status and device list.
+    """
+    import os
+    
+    # Find HDC executable
+    hdc_path = shutil.which("hdc")
+    if not hdc_path:
+        # Try common HDC installation paths on Windows
+        username = os.getenv("USERNAME", "")
+        common_paths = [
+            # Open-AutoGLM bundled HDC (recommended)
+            r"D:\python\Open-AutoGLM\toolchains\hdc.exe",
+            r".\toolchains\hdc.exe",
+            r"toolchains\hdc.exe",
+            # DevEco Studio default paths
+            r"D:\HuaWei\Sdk\20\toolchains\hdc.exe",
+            r"C:\HuaWei\Sdk\20\toolchains\hdc.exe",
+            # User-specific paths
+            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\ohos\base\toolchains\hdc.exe",
+            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\10\toolchains\hdc.exe",
+            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\11\toolchains\hdc.exe",
+            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\12\toolchains\hdc.exe",
+            # Program Files paths
+            r"C:\Program Files\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
+            r"C:\Program Files (x86)\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
+            # Custom SDK paths
+            r"D:\DevEcoStudio\sdk\openharmony\toolchains\hdc.exe",
+            r"E:\HuaWei\Sdk\openharmony\toolchains\hdc.exe",
+        ]
+        for path in common_paths:
+            if os.path.exists(path):
+                hdc_path = path
+                break
+    
+    if not hdc_path:
+        return CheckResult(
+            success=False,
+            message="HDC 未安装",
+            details="HDC is not installed.",
+            solution="请先安装 HDC 工具",
+        )
+    
+    try:
+        result = subprocess.run(
+            [hdc_path, "list", "targets"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        
+        devices = []
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            if line and not line.startswith("List"):
+                device_id = line.split()[0] if line.split() else line
+                devices.append(device_id)
+        
+        if not devices:
+            return CheckResult(
+                success=False,
+                message="未检测到设备",
+                details="No devices connected.",
+                solution="1. 在鸿蒙设备上启用 USB 调试和无线调试\n"
+                "2. 通过 USB 连接并授权连接\n"
+                "3. 或远程连接: hdc tconn <ip>:<port>",
+            )
+        
+        device_info = "\n".join([f"  - {d}" for d in devices])
+        return CheckResult(
+            success=True,
+            message=f"检测到 {len(devices)} 个设备",
+            details=f"Connected devices:\n{device_info}",
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            success=False, message="设备检查超时", details="HDC command timed out."
+        )
+    except Exception as e:
+        return CheckResult(
+            success=False, message=f"设备检查出错: {e}", details=str(e)
         )
 
 
@@ -311,12 +494,9 @@ def check_model_api(base_url: str, model_name: str, api_key: str = "EMPTY") -> C
                 details=f"Invalid URL format: {base_url}",
             )
 
-        # Use simple test like test_api.py (exact same implementation)
-        import requests
-        
-        # Create client with reasonable timeout (30 seconds for GUI responsiveness)
-        # test_api.py doesn't set timeout, but for GUI we need reasonable timeout
-        client = OpenAI(base_url=base_url, api_key=api_key, timeout=30.0)
+        # Use simple test like test_api.py (but disable system proxies to avoid localhost hijack)
+        http_client = DefaultHttpxClient(timeout=30.0, trust_env=False)
+        client = OpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         
         # Try to get test messages from ModelScope (exact same as test_api.py)
         try:

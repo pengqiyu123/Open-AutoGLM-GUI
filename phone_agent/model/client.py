@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from openai import OpenAI
+from openai import OpenAI, DefaultHttpxClient
 
 
 @dataclass
@@ -19,6 +19,8 @@ class ModelConfig:
     top_p: float = 0.85
     frequency_penalty: float = 0.2
     extra_body: dict[str, Any] = field(default_factory=dict)
+    # Optional HTTP proxy settings. Default None.
+    proxies: dict | None = None
 
 
 @dataclass
@@ -40,7 +42,22 @@ class ModelClient:
 
     def __init__(self, config: ModelConfig | None = None):
         self.config = config or ModelConfig()
-        self.client = OpenAI(base_url=self.config.base_url, api_key=self.config.api_key)
+        # Disable env proxies by default to avoid accidental localhost (e.g., 127.0.0.1:11434).
+        if self.config.proxies is not None:
+            http_client = DefaultHttpxClient(
+                proxies=self.config.proxies,
+                timeout=60.0,
+            )
+        else:
+            http_client = DefaultHttpxClient(
+                timeout=60.0,
+                trust_env=False,
+            )
+        self.client = OpenAI(
+            base_url=self.config.base_url,
+            api_key=self.config.api_key,
+            http_client=http_client,
+        )
 
     def request(self, messages: list[dict[str, Any]]) -> ModelResponse:
         """

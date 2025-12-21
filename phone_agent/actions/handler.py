@@ -2,7 +2,7 @@
 
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from phone_agent.adb import (
     back,
@@ -39,6 +39,7 @@ class ActionHandler:
         confirmation_callback: Optional callback for sensitive action confirmation.
             Should return True to proceed, False to cancel.
         takeover_callback: Optional callback for takeover requests (login, captcha).
+        device_manager: Optional DeviceManager for unified device control (supports HarmonyOS).
     """
 
     def __init__(
@@ -48,12 +49,14 @@ class ActionHandler:
         takeover_callback: Callable[[str], None] | None = None,
         notifier: Callable[[str, str], None] | None = None,
         logger: Callable[[str], None] | None = None,
+        device_manager: Optional[Any] = None,  # DeviceManager instance
     ):
         self.device_id = device_id
         self.confirmation_callback = confirmation_callback or self._default_confirmation
         self.takeover_callback = takeover_callback or self._default_takeover
         self.notifier = notifier
         self.logger = logger
+        self.device_manager = device_manager  # For HarmonyOS support
 
     def execute(
         self, action: dict[str, Any], screen_width: int, screen_height: int
@@ -136,6 +139,14 @@ class ActionHandler:
         if not app_name:
             return ActionResult(False, False, "No app name specified")
 
+        # Use device manager if available (supports HarmonyOS)
+        if self.device_manager:
+            success = self.device_manager.launch_app(app_name)
+            if success:
+                return ActionResult(True, False)
+            return ActionResult(False, False, f"App not found: {app_name}")
+        
+        # Fallback to Android-only launch
         success = launch_app(app_name, self.device_id)
         if success:
             return ActionResult(True, False)
@@ -158,14 +169,26 @@ class ActionHandler:
                     message="User cancelled sensitive operation",
                 )
 
-        tap(x, y, self.device_id)
+        # Use device manager if available (supports HarmonyOS)
+        if self.device_manager:
+            self.device_manager.tap(x, y)
+        else:
+            tap(x, y, self.device_id)
         return ActionResult(True, False)
 
     def _handle_type(self, action: dict, width: int, height: int) -> ActionResult:
         """Handle text input action."""
         text = action.get("text", "")
 
-        # Switch to ADB keyboard
+        # Use device manager if available (supports HarmonyOS)
+        if self.device_manager:
+            # HarmonyOS uses uitest for text input directly
+            from phone_agent.device_manager import DeviceMode
+            if self.device_manager.mode == DeviceMode.HARMONYOS:
+                self.device_manager.input_text(text)
+                return ActionResult(True, False)
+        
+        # Android: Switch to ADB keyboard
         original_ime = detect_and_set_adb_keyboard(self.device_id)
         time.sleep(1.0)
 
@@ -193,17 +216,29 @@ class ActionHandler:
         start_x, start_y = self._convert_relative_to_absolute(start, width, height)
         end_x, end_y = self._convert_relative_to_absolute(end, width, height)
 
-        swipe(start_x, start_y, end_x, end_y, device_id=self.device_id)
+        # Use device manager if available (supports HarmonyOS)
+        if self.device_manager:
+            self.device_manager.swipe(start_x, start_y, end_x, end_y)
+        else:
+            swipe(start_x, start_y, end_x, end_y, device_id=self.device_id)
         return ActionResult(True, False)
 
     def _handle_back(self, action: dict, width: int, height: int) -> ActionResult:
         """Handle back button action."""
-        back(self.device_id)
+        # Use device manager if available (supports HarmonyOS)
+        if self.device_manager:
+            self.device_manager.back()
+        else:
+            back(self.device_id)
         return ActionResult(True, False)
 
     def _handle_home(self, action: dict, width: int, height: int) -> ActionResult:
         """Handle home button action."""
-        home(self.device_id)
+        # Use device manager if available (supports HarmonyOS)
+        if self.device_manager:
+            self.device_manager.home()
+        else:
+            home(self.device_id)
         return ActionResult(True, False)
 
     def _handle_double_tap(self, action: dict, width: int, height: int) -> ActionResult:
@@ -213,7 +248,11 @@ class ActionHandler:
             return ActionResult(False, False, "No element coordinates")
 
         x, y = self._convert_relative_to_absolute(element, width, height)
-        double_tap(x, y, self.device_id)
+        # Use device manager if available (supports HarmonyOS)
+        if self.device_manager:
+            self.device_manager.double_tap(x, y)
+        else:
+            double_tap(x, y, self.device_id)
         return ActionResult(True, False)
 
     def _handle_long_press(self, action: dict, width: int, height: int) -> ActionResult:
@@ -223,7 +262,11 @@ class ActionHandler:
             return ActionResult(False, False, "No element coordinates")
 
         x, y = self._convert_relative_to_absolute(element, width, height)
-        long_press(x, y, device_id=self.device_id)
+        # Use device manager if available (supports HarmonyOS)
+        if self.device_manager:
+            self.device_manager.long_press(x, y)
+        else:
+            long_press(x, y, device_id=self.device_id)
         return ActionResult(True, False)
 
     def _handle_wait(self, action: dict, width: int, height: int) -> ActionResult:
