@@ -4,6 +4,8 @@ Statistics Widget - 统计仪表板
 显示任务执行统计、黄金路径使用情况和错误模式分析。
 """
 
+import re
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QTableWidget, QTableWidgetItem, QGroupBox,
@@ -143,6 +145,11 @@ class StatisticsWidget(QWidget):
         self.view_path_btn.clicked.connect(self._view_golden_path_details)
         btn_layout.addWidget(self.view_path_btn)
         
+        self.shortcut_btn = QPushButton("⚡ 设置快捷命令")
+        self.shortcut_btn.setStyleSheet("background-color: #FF9800; color: white;")
+        self.shortcut_btn.clicked.connect(self._set_shortcut_command)
+        btn_layout.addWidget(self.shortcut_btn)
+        
         self.test_prompt_btn = QPushButton("🧪 测试提示词")
         self.test_prompt_btn.setStyleSheet("background-color: #2196F3; color: white;")
         self.test_prompt_btn.clicked.connect(self._test_golden_path_prompt)
@@ -158,9 +165,9 @@ class StatisticsWidget(QWidget):
         
         # 创建表格
         self.golden_path_table = QTableWidget()
-        self.golden_path_table.setColumnCount(6)
+        self.golden_path_table.setColumnCount(7)
         self.golden_path_table.setHorizontalHeaderLabels([
-            "ID", "任务模式", "难度", "成功率", "使用次数", "最后更新"
+            "ID", "任务模式", "快捷命令", "难度", "成功率", "使用次数", "最后更新"
         ])
         
         # 设置表格属性
@@ -170,6 +177,7 @@ class StatisticsWidget(QWidget):
         self.golden_path_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.golden_path_table.setAlternatingRowColors(True)
         self.golden_path_table.setColumnWidth(0, 50)  # ID 列窄一点
+        self.golden_path_table.setColumnWidth(2, 120)  # 快捷命令列
         
         # 右键菜单
         self.golden_path_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -188,6 +196,10 @@ class StatisticsWidget(QWidget):
         view_action = QAction("👁️ 查看详情", self)
         view_action.triggered.connect(self._view_golden_path_details)
         menu.addAction(view_action)
+        
+        shortcut_action = QAction("⚡ 设置快捷命令", self)
+        shortcut_action.triggered.connect(self._set_shortcut_command)
+        menu.addAction(shortcut_action)
         
         test_action = QAction("🧪 测试提示词", self)
         test_action.triggered.connect(self._test_golden_path_prompt)
@@ -210,6 +222,74 @@ class StatisticsWidget(QWidget):
         if id_item:
             return int(id_item.text())
         return None
+    
+    def _set_shortcut_command(self):
+        """设置快捷命令"""
+        from PyQt5.QtWidgets import QMessageBox, QInputDialog
+        
+        path_id = self._get_selected_golden_path_id()
+        if path_id is None:
+            QMessageBox.information(self, "提示", "请先选择一条黄金路径")
+            return
+        
+        try:
+            from pathlib import Path
+            from gui.utils.golden_path_repository import GoldenPathRepository
+            
+            db_path = str(Path(self.task_logger.log_dir) / "tasks.db")
+            repo = GoldenPathRepository(db_path)
+            path_data = repo.find_by_id(path_id)
+            
+            if not path_data:
+                QMessageBox.warning(self, "错误", "未找到该黄金路径")
+                return
+            
+            # 获取当前快捷命令
+            current_shortcut = path_data.get('shortcut_command', '')
+            task_pattern = path_data.get('task_pattern', '')
+            
+            # 弹出输入对话框
+            shortcut, ok = QInputDialog.getText(
+                self,
+                "设置快捷命令",
+                f"为黄金路径设置一个简短的快捷命令：\n\n"
+                f"原任务: {task_pattern[:50]}...\n\n"
+                f"快捷命令（用户输入此命令时将直接匹配此黄金路径）：",
+                text=current_shortcut
+            )
+            
+            if ok:
+                shortcut = shortcut.strip()
+                
+                # 检查是否与其他路径的快捷命令冲突
+                if shortcut:
+                    existing = repo.find_by_shortcut(shortcut)
+                    if existing and existing.get('id') != path_id:
+                        QMessageBox.warning(
+                            self, 
+                            "冲突", 
+                            f"快捷命令「{shortcut}」已被其他黄金路径使用！\n"
+                            f"冲突路径: {existing.get('task_pattern', '')[:50]}..."
+                        )
+                        return
+                
+                # 更新快捷命令
+                if repo.update_shortcut_command(path_id, shortcut):
+                    if shortcut:
+                        QMessageBox.information(
+                            self, 
+                            "成功", 
+                            f"已设置快捷命令：{shortcut}\n\n"
+                            f"现在用户输入「{shortcut}」时将直接匹配此黄金路径。"
+                        )
+                    else:
+                        QMessageBox.information(self, "成功", "已清除快捷命令")
+                    self.refresh_statistics()
+                else:
+                    QMessageBox.warning(self, "失败", "更新快捷命令失败")
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"设置快捷命令失败: {e}")
     
     def _view_golden_path_details(self):
         """查看黄金路径详情"""
@@ -385,49 +465,69 @@ class StatisticsWidget(QWidget):
     
     def _generate_test_prompt(self, path_data: dict) -> str:
         """
-        生成测试提示词 - 与 agent_runner._build_enhanced_prompt() 保持一致
+        生成测试提示词 - 优化版
         
-        关键：把约束直接融入任务描述中，模仿用户直接输入的格式。
-        复杂格式（警告、标题等）会被模型忽略，简单的逗号分隔格式更有效。
+        格式：原始任务,1.第一步动作,2.第二步动作,3.第三步动作...
+        如果有错误步骤，添加"不要xxx"的约束
         """
+        import json
+        
         task = path_data.get('task_pattern', '未知任务')
         
-        # 获取约束信息
+        # 获取步骤信息
+        correct_path = path_data.get('correct_path', [])
+        action_sop = path_data.get('action_sop', [])
         forbidden = path_data.get('forbidden', [])
-        hints = path_data.get('hints', [])
-        common_errors = path_data.get('common_errors', [])
         
-        # 如果没有任何约束，直接返回原任务
-        if not forbidden and not hints and not common_errors:
-            return f"任务: {task}\n\n（无约束条件）"
+        # 如果 action_sop 是字符串，解析它
+        if isinstance(action_sop, str):
+            try:
+                action_sop = json.loads(action_sop)
+            except:
+                action_sop = []
         
-        # 构建约束列表 - 简单的编号格式
-        constraints = []
-        constraint_num = 1
+        # 如果 correct_path 是字符串，解析它
+        if isinstance(correct_path, str):
+            try:
+                correct_path = json.loads(correct_path)
+            except:
+                correct_path = []
+        
+        # 如果 forbidden 是字符串，解析它
+        if isinstance(forbidden, str):
+            try:
+                forbidden = json.loads(forbidden)
+            except:
+                forbidden = []
+        
+        # 从 action_sop 重新生成详细步骤描述
+        steps = self._generate_detailed_steps(action_sop, path_data)
+        
+        # 构建提示词
+        step_parts = []
+        for i, step_desc in enumerate(steps, 1):
+            step_parts.append(f"{i}.{step_desc}")
         
         # 添加禁止操作
-        if forbidden:
-            for f in forbidden:
-                constraints.append(f"{constraint_num}.{f}")
-                constraint_num += 1
-        elif common_errors:
-            for error in common_errors[:3]:
-                correction = error.get('correction', '')
-                if correction:
-                    constraints.append(f"{constraint_num}.{correction}")
-                    constraint_num += 1
+        forbidden_parts = []
+        for f in forbidden:
+            f = str(f).strip()
+            # 如果已经以"不要"、"不"、"禁止"开头，直接使用
+            if f.startswith('不要') or f.startswith('不允许') or f.startswith('禁止'):
+                forbidden_parts.append(f)
+            elif f.startswith('不'):
+                forbidden_parts.append(f)
+            # 如果是提示性信息（包含"要"、"应该"、"需要"等），跳过
+            elif any(kw in f for kw in ['要返回', '要点击', '应该', '需要', '就是', '说明', '表示', '显示']):
+                # 这些是提示信息，不是禁止操作，跳过
+                continue
+            else:
+                forbidden_parts.append(f"不要{f}")
         
-        # 添加提示信息
-        if hints:
-            for h in hints:
-                # 移除"位置提示:"等前缀
-                h_clean = h.replace("位置提示: ", "").replace("判断条件: ", "")
-                constraints.append(f"{constraint_num}.{h_clean}")
-                constraint_num += 1
-        
-        # 生成最终提示词 - 模仿用户输入格式
-        if constraints:
-            enhanced_task = f"{task},{','.join(constraints)}"
+        # 生成最终提示词
+        all_parts = step_parts + forbidden_parts
+        if all_parts:
+            enhanced_task = f"{task},{','.join(all_parts)}"
         else:
             enhanced_task = task
         
@@ -438,17 +538,127 @@ class StatisticsWidget(QWidget):
         preview_parts.append("")
         preview_parts.append("=" * 50)
         preview_parts.append("")
-        preview_parts.append("【约束条件分解】")
+        preview_parts.append("【步骤分解】")
         preview_parts.append(f"原始任务: {task}")
         preview_parts.append("")
-        if constraints:
-            preview_parts.append("约束列表:")
-            for c in constraints:
-                preview_parts.append(f"  {c}")
-        else:
-            preview_parts.append("（无约束条件）")
+        
+        if step_parts:
+            preview_parts.append("执行步骤:")
+            for s in step_parts:
+                preview_parts.append(f"  {s}")
+            preview_parts.append("")
+        
+        if forbidden_parts:
+            preview_parts.append("禁止操作:")
+            for f in forbidden_parts:
+                preview_parts.append(f"  ❌ {f}")
+        
+        if not step_parts and not forbidden_parts:
+            preview_parts.append("（无步骤信息，请重新提取黄金路径）")
         
         return '\n'.join(preview_parts)
+    
+    def _generate_detailed_steps(self, action_sop: list, path_data: dict) -> list:
+        """
+        从 correct_path 或 action_sop 生成详细的步骤描述
+        
+        优先使用 correct_path（已经是详细描述）
+        """
+        import json
+        
+        # 优先使用 correct_path
+        correct_path = path_data.get('correct_path', [])
+        if isinstance(correct_path, str):
+            try:
+                correct_path = json.loads(correct_path)
+            except:
+                correct_path = []
+        
+        # 如果 correct_path 有内容，直接使用
+        if correct_path:
+            # 移除可能存在的序号前缀
+            steps = []
+            for step in correct_path:
+                # 移除 "1. " 这样的前缀
+                cleaned = re.sub(r'^\d+\.\s*', '', str(step))
+                if cleaned:
+                    steps.append(cleaned)
+            return steps
+        
+        # 否则从 action_sop 生成
+        steps = []
+        for step_data in action_sop:
+            label = step_data.get('label', '')
+            action = step_data.get('action', {})
+            
+            # 跳过 skip 的步骤
+            if label == 'skip':
+                continue
+            
+            # 如果是错误步骤，跳过（会在 forbidden 中处理）
+            if label == 'wrong':
+                continue
+            
+            # 解析动作
+            if isinstance(action, str):
+                try:
+                    action = json.loads(action)
+                except:
+                    action = {}
+            
+            # 生成步骤描述
+            desc = self._action_to_step_description(action)
+            if desc:
+                steps.append(desc)
+        
+        return steps
+    
+    def _action_to_step_description(self, action: dict) -> str:
+        """将动作转换为步骤描述"""
+        if not action:
+            return ""
+        
+        action_type = action.get('action', '')
+        metadata = action.get('_metadata', '')
+        
+        # 处理 finish 动作
+        if metadata == 'finish':
+            return "完成任务"
+        
+        if action_type == 'Launch':
+            app = action.get('app', '应用')
+            return f"打开{app}"
+        
+        elif action_type == 'Tap':
+            element = action.get('element', [])
+            # 这里只能返回基本描述，详细描述需要 thinking
+            return "点击目标元素"
+        
+        elif action_type == 'Type':
+            text = action.get('text', '')
+            return f"输入「{text}」"
+        
+        elif action_type == 'Swipe':
+            start = action.get('start', [0, 0])
+            end = action.get('end', [0, 0])
+            if len(start) >= 2 and len(end) >= 2:
+                dy = end[1] - start[1]
+                if dy < 0:
+                    return "向上滑动屏幕"
+                else:
+                    return "向下滑动屏幕"
+            return "滑动屏幕"
+        
+        elif action_type == 'Wait':
+            return "等待页面加载"
+        
+        elif action_type == 'Back':
+            return "返回上一页"
+        
+        elif action_type == 'Home':
+            return "返回桌面"
+        
+        return ""
     
     def _copy_to_clipboard(self, text: str):
         """复制文本到剪贴板"""
@@ -594,13 +804,24 @@ class StatisticsWidget(QWidget):
             conn = self.task_logger._get_conn()
             cur = conn.cursor()
             
-            cur.execute("""
-                SELECT id, task_pattern, difficulty, success_rate, 
-                       usage_count, updated_at
-                FROM golden_paths
-                ORDER BY usage_count DESC, success_rate DESC
-                LIMIT 50
-            """)
+            # 检查 shortcut_command 列是否存在
+            try:
+                cur.execute("""
+                    SELECT id, task_pattern, shortcut_command, difficulty, success_rate, 
+                           usage_count, updated_at
+                    FROM golden_paths
+                    ORDER BY usage_count DESC, success_rate DESC
+                    LIMIT 50
+                """)
+            except:
+                # 如果列不存在，使用旧查询
+                cur.execute("""
+                    SELECT id, task_pattern, NULL as shortcut_command, difficulty, success_rate, 
+                           usage_count, updated_at
+                    FROM golden_paths
+                    ORDER BY usage_count DESC, success_rate DESC
+                    LIMIT 50
+                """)
             
             rows = cur.fetchall()
             conn.close()
@@ -620,13 +841,23 @@ class StatisticsWidget(QWidget):
                 )
                 
                 # 任务模式
+                task_pattern = row_data[1] or ""
+                if len(task_pattern) > 30:
+                    task_pattern = task_pattern[:30] + "..."
                 self.golden_path_table.setItem(
                     row_position, 1, 
-                    QTableWidgetItem(row_data[1] or "")
+                    QTableWidgetItem(task_pattern)
                 )
                 
+                # 快捷命令
+                shortcut = row_data[2] or ""
+                shortcut_item = QTableWidgetItem(shortcut)
+                if shortcut:
+                    shortcut_item.setForeground(QColor("#FF9800"))  # 橙色高亮
+                self.golden_path_table.setItem(row_position, 2, shortcut_item)
+                
                 # 难度
-                difficulty = row_data[2] or "medium"
+                difficulty = row_data[3] or "medium"
                 difficulty_item = QTableWidgetItem(
                     {"simple": "简单", "medium": "中等", "complex": "复杂"}.get(difficulty, difficulty)
                 )
@@ -634,31 +865,31 @@ class StatisticsWidget(QWidget):
                     difficulty_item.setForeground(QColor("#4CAF50"))
                 elif difficulty == "complex":
                     difficulty_item.setForeground(QColor("#F44336"))
-                self.golden_path_table.setItem(row_position, 2, difficulty_item)
+                self.golden_path_table.setItem(row_position, 3, difficulty_item)
                 
                 # 成功率
-                success_rate = row_data[3] or 0.0
+                success_rate = row_data[4] or 0.0
                 success_item = QTableWidgetItem(f"{success_rate * 100:.1f}%")
                 if success_rate >= 0.8:
                     success_item.setForeground(QColor("#4CAF50"))
                 elif success_rate < 0.5:
                     success_item.setForeground(QColor("#F44336"))
-                self.golden_path_table.setItem(row_position, 3, success_item)
+                self.golden_path_table.setItem(row_position, 4, success_item)
                 
                 # 使用次数
-                usage_count = row_data[4] or 0
+                usage_count = row_data[5] or 0
                 self.golden_path_table.setItem(
-                    row_position, 4,
+                    row_position, 5,
                     QTableWidgetItem(str(usage_count))
                 )
                 
                 # 最后更新
-                updated_at = row_data[5] or ""
+                updated_at = row_data[6] or ""
                 if updated_at:
                     # 只显示日期部分
                     updated_at = updated_at.split()[0] if ' ' in updated_at else updated_at
                 self.golden_path_table.setItem(
-                    row_position, 5,
+                    row_position, 6,
                     QTableWidgetItem(updated_at)
                 )
             

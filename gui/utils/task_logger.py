@@ -138,11 +138,40 @@ class TaskLogger:
                     """
                 )
 
+                # Create mental_shortcuts table for storing learned element positions
+                # Requirements: 2.1, 2.3
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS mental_shortcuts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        app TEXT NOT NULL,
+                        scene TEXT DEFAULT '未知页面',
+                        element TEXT NOT NULL,
+                        location_hint TEXT,
+                        typical_coords TEXT,
+                        coord_variance TEXT,
+                        action TEXT,
+                        data_source TEXT DEFAULT 'action',
+                        confidence REAL DEFAULT 1.0,
+                        usage_count INTEGER DEFAULT 1,
+                        success_count INTEGER DEFAULT 1,
+                        source_sessions TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        last_used_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+
                 # Create indexes for better query performance
                 try:
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_golden_paths_pattern ON golden_paths(task_pattern)")
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_error_patterns_pattern ON error_patterns(task_pattern)")
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_steps_session_label ON steps(session_id, user_label)")
+                    # Indexes for mental_shortcuts table (Requirements: 2.1, 2.3)
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_shortcuts_app ON mental_shortcuts(app)")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_shortcuts_app_scene ON mental_shortcuts(app, scene)")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_shortcuts_confidence ON mental_shortcuts(confidence)")
                 except sqlite3.OperationalError:
                     # Index already exists, ignore
                     pass

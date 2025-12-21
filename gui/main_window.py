@@ -45,8 +45,9 @@ def _get_logs_dir() -> str:
         # Go up from dist/ to Open-AutoGLM-main/
         return str(Path(sys.executable).parent.parent / "logs")
     else:
-        # Running as script
-        return "logs"
+        # Running as script - gui/main_window.py
+        # Go up to Open-AutoGLM-main/logs
+        return str(Path(__file__).parent.parent / "logs")
 
 
 class ModelAPICheckWorker(QThread):
@@ -440,7 +441,14 @@ class MainWindow(QWidget):
         task_layout = QVBoxLayout()
 
         self.task_input = QTextEdit()
-        self.task_input.setPlaceholderText("输入你的任务描述，例如：\n打开微信，对文件传输助手发送消息：部署成功")
+        self.task_input.setPlaceholderText(
+            "输入你的任务描述，例如：\n"
+            "打开微信，对文件传输助手发送消息：部署成功\n\n"
+            "💡 第一次命令请尽量详细，例如(vivo):\n"
+            "打开设置,找到游戏魔盒打开,关闭游戏魔盒按钮\n\n"
+            "⚡ 设置快捷命令后，可直接输入简短命令，如:\n"
+            "关闭游戏魔盒"
+        )
         self.task_input.setMinimumHeight(200)
         task_layout.addWidget(self.task_input)
 

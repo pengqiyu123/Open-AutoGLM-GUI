@@ -75,6 +75,11 @@ class GoldenPathRepository:
             except:
                 cur.execute("ALTER TABLE golden_paths ADD COLUMN hints TEXT")
             
+            try:
+                cur.execute("SELECT shortcut_command FROM golden_paths LIMIT 1")
+            except:
+                cur.execute("ALTER TABLE golden_paths ADD COLUMN shortcut_command TEXT")
+            
             # 创建索引
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_golden_paths_pattern
@@ -372,6 +377,60 @@ class GoldenPathRepository:
             
             return success
 
+    def update_shortcut_command(self, path_id: int, shortcut_command: str) -> bool:
+        """
+        更新快捷命令
+        
+        Args:
+            path_id: 路径 ID
+            shortcut_command: 快捷命令文本
+            
+        Returns:
+            是否更新成功
+        """
+        with self._db_lock:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            
+            cur.execute("""
+                UPDATE golden_paths
+                SET shortcut_command = ?,
+                    updated_at = ?
+                WHERE id = ?
+            """, (shortcut_command.strip(), datetime.now().isoformat(), path_id))
+            
+            success = cur.rowcount > 0
+            conn.commit()
+            conn.close()
+            
+            return success
+
+    def find_by_shortcut(self, shortcut_command: str) -> Optional[Dict]:
+        """
+        根据快捷命令精确查找黄金路径
+        
+        Args:
+            shortcut_command: 快捷命令
+            
+        Returns:
+            黄金路径字典，如果不存在则返回 None
+        """
+        with self._db_lock:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            
+            cur.execute("""
+                SELECT * FROM golden_paths
+                WHERE shortcut_command = ?
+            """, (shortcut_command.strip(),))
+            
+            row = cur.fetchone()
+            conn.close()
+            
+            if row:
+                return self._row_to_dict(row)
+            return None
+
     def get_statistics(self) -> Dict:
         """
         获取统计信息
@@ -445,5 +504,10 @@ class GoldenPathRepository:
             result['hints'] = json.loads(row['hints']) if row['hints'] else []
         except (KeyError, TypeError):
             result['hints'] = []
+        
+        try:
+            result['shortcut_command'] = row['shortcut_command'] or ''
+        except (KeyError, TypeError):
+            result['shortcut_command'] = ''
         
         return result

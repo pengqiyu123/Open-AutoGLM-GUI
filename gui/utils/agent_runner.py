@@ -283,7 +283,10 @@ class AgentRunner(QObject):
         enhanced_task = self._build_enhanced_prompt(task)
         
         if enhanced_task != task:
-            self.progress_updated.emit("📝 已添加黄金路径提示到任务描述")
+            self.progress_updated.emit("📝 已添加黄金路径步骤到任务描述")
+            # 显示增强后的任务（截取前200字符）
+            display_task = enhanced_task[:200] + "..." if len(enhanced_task) > 200 else enhanced_task
+            self.progress_updated.emit(f"   📋 增强任务: {display_task}")
 
         # First step
         try:
@@ -442,55 +445,68 @@ class AgentRunner(QObject):
         """
         Build enhanced prompt with golden path constraints.
         
-        关键：把约束直接融入任务描述中，模仿用户直接输入的格式。
+        关键：把正确步骤和约束直接融入任务描述中，模仿用户直接输入的格式。
+        格式：原始任务,1.第一步,2.第二步,...,不要xxx
         
         Args:
             task: Original task description
             
         Returns:
-            Enhanced task description with constraints
+            Enhanced task description with steps and constraints
         """
-        if not self._matched_golden_path:
-            return task
+        enhanced_task = task
         
-        # 获取约束信息
-        forbidden = self._matched_golden_path.get('forbidden', [])
-        hints = self._matched_golden_path.get('hints', [])
-        common_errors = self._matched_golden_path.get('common_errors', [])
-        
-        # 如果没有任何约束，直接返回原任务
-        if not forbidden and not hints and not common_errors:
-            return task
-        
-        # 构建约束列表
-        constraints = []
-        constraint_num = 1
-        
-        # 添加禁止操作
-        if forbidden:
+        # 添加黄金路径约束
+        if self._matched_golden_path:
+            import json
+            import re
+            
+            # 获取正确步骤
+            correct_path = self._matched_golden_path.get('correct_path', [])
+            if isinstance(correct_path, str):
+                try:
+                    correct_path = json.loads(correct_path)
+                except:
+                    correct_path = []
+            
+            # 获取禁止操作
+            forbidden = self._matched_golden_path.get('forbidden', [])
+            if isinstance(forbidden, str):
+                try:
+                    forbidden = json.loads(forbidden)
+                except:
+                    forbidden = []
+            
+            # 构建步骤列表
+            step_parts = []
+            for i, step in enumerate(correct_path, 1):
+                # 移除可能存在的序号前缀
+                step_clean = re.sub(r'^\d+\.\s*', '', str(step))
+                if step_clean:
+                    step_parts.append(f"{i}.{step_clean}")
+            
+            # 构建禁止操作列表
+            forbidden_parts = []
             for f in forbidden:
-                constraints.append(f"{constraint_num}.{f}")
-                constraint_num += 1
-        elif common_errors:
-            for error in common_errors[:3]:
-                correction = error.get('correction', '')
-                if correction:
-                    constraints.append(f"{constraint_num}.{correction}")
-                    constraint_num += 1
+                f = str(f).strip()
+                # 如果已经以"不要"、"不"、"禁止"开头，直接使用
+                if f.startswith('不要') or f.startswith('不允许') or f.startswith('禁止') or f.startswith('不'):
+                    forbidden_parts.append(f)
+                # 如果是提示性信息，跳过
+                elif any(kw in f for kw in ['要返回', '要点击', '应该', '需要', '就是', '说明', '表示', '显示']):
+                    continue
+                else:
+                    forbidden_parts.append(f"不要{f}")
+            
+            # 合并所有部分
+            all_parts = step_parts + forbidden_parts
+            if all_parts:
+                enhanced_task = f"{task},{','.join(all_parts)}"
+                
+                # 记录日志
+                logger.info(f"已增强任务描述，添加 {len(step_parts)} 个步骤和 {len(forbidden_parts)} 个约束")
         
-        # 添加提示信息
-        if hints:
-            for h in hints:
-                # 移除"位置提示:"等前缀
-                h_clean = h.replace("位置提示: ", "").replace("判断条件: ", "")
-                constraints.append(f"{constraint_num}.{h_clean}")
-                constraint_num += 1
-        
-        # 把约束直接融入任务描述，模仿用户输入格式
-        if constraints:
-            return f"{task},{','.join(constraints)}"
-        
-        return task
+        return enhanced_task
 
     def _inject_experience_to_agent(self):
         """

@@ -171,6 +171,34 @@ class StepPlayerWidget(QWidget):
         annotation_group.setLayout(annotation_layout)
         layout.addWidget(annotation_group)
         
+        # Batch operation buttons (moved from left panel)
+        batch_group = QGroupBox("批量操作")
+        batch_layout = QHBoxLayout()
+        
+        self.mark_all_correct_btn = QPushButton("✓ 全部正确")
+        self.mark_all_correct_btn.setStyleSheet(
+            "QPushButton { background-color: #4CAF50; color: white; padding: 8px; }"
+            "QPushButton:hover { background-color: #45a049; }"
+        )
+        batch_layout.addWidget(self.mark_all_correct_btn)
+        
+        self.clear_annotations_btn = QPushButton("🗑️ 清除标注")
+        self.clear_annotations_btn.setStyleSheet(
+            "QPushButton { background-color: #FF9800; color: white; padding: 8px; }"
+            "QPushButton:hover { background-color: #F57C00; }"
+        )
+        batch_layout.addWidget(self.clear_annotations_btn)
+        
+        self.extract_golden_path_btn = QPushButton("⭐ 提取黄金路径")
+        self.extract_golden_path_btn.setStyleSheet(
+            "QPushButton { background-color: #2196F3; color: white; padding: 8px; }"
+            "QPushButton:hover { background-color: #1976D2; }"
+        )
+        batch_layout.addWidget(self.extract_golden_path_btn)
+        
+        batch_group.setLayout(batch_layout)
+        layout.addWidget(batch_group)
+        
         layout.addStretch()
     
     def _clean_text(self, text: str) -> str:
@@ -413,6 +441,12 @@ class TaskReviewWidget(QWidget):
         self.step_player.step_annotated.connect(self._on_step_annotated)
         self.step_player.prev_step_requested.connect(self._load_prev_step)
         self.step_player.next_step_requested.connect(self._load_next_step)
+        
+        # Connect batch operation buttons
+        self.step_player.mark_all_correct_btn.clicked.connect(self._mark_all_correct)
+        self.step_player.clear_annotations_btn.clicked.connect(self._clear_all_annotations)
+        self.step_player.extract_golden_path_btn.clicked.connect(self._extract_golden_path)
+        
         splitter.addWidget(self.step_player)
         
         # Set initial sizes (30% left, 70% right)
@@ -426,54 +460,30 @@ class TaskReviewWidget(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(8, 8, 8, 8)
         
-        # Title
+        # Title with refresh button
+        title_layout = QHBoxLayout()
         title_label = QLabel("历史任务列表")
         title_font = QFont()
         title_font.setPointSize(12)
         title_font.setBold(True)
         title_label.setFont(title_font)
-        layout.addWidget(title_label)
+        title_layout.addWidget(title_label)
+        
+        title_layout.addStretch()
+        
+        refresh_btn = QPushButton("🔄 刷新")
+        refresh_btn.setStyleSheet(
+            "QPushButton { padding: 4px 8px; }"
+        )
+        refresh_btn.clicked.connect(self.load_tasks)
+        title_layout.addWidget(refresh_btn)
+        
+        layout.addLayout(title_layout)
         
         # Task list
         self.task_list = QListWidget()
         self.task_list.itemSelectionChanged.connect(self._on_task_selected)
         layout.addWidget(self.task_list)
-        
-        # Batch operation buttons
-        batch_group = QGroupBox("批量操作")
-        batch_layout = QVBoxLayout()
-        
-        mark_all_correct_btn = QPushButton("✓ 全部标记为正确")
-        mark_all_correct_btn.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; padding: 8px; }"
-            "QPushButton:hover { background-color: #45a049; }"
-        )
-        mark_all_correct_btn.clicked.connect(self._mark_all_correct)
-        batch_layout.addWidget(mark_all_correct_btn)
-        
-        clear_annotations_btn = QPushButton("🗑️ 清除所有标注")
-        clear_annotations_btn.setStyleSheet(
-            "QPushButton { background-color: #FF9800; color: white; padding: 8px; }"
-            "QPushButton:hover { background-color: #F57C00; }"
-        )
-        clear_annotations_btn.clicked.connect(self._clear_all_annotations)
-        batch_layout.addWidget(clear_annotations_btn)
-        
-        extract_golden_path_btn = QPushButton("⭐ 提取黄金路径")
-        extract_golden_path_btn.setStyleSheet(
-            "QPushButton { background-color: #2196F3; color: white; padding: 8px; }"
-            "QPushButton:hover { background-color: #1976D2; }"
-        )
-        extract_golden_path_btn.clicked.connect(self._extract_golden_path)
-        batch_layout.addWidget(extract_golden_path_btn)
-        
-        batch_group.setLayout(batch_layout)
-        layout.addWidget(batch_group)
-        
-        # Refresh button
-        refresh_btn = QPushButton("🔄 刷新列表")
-        refresh_btn.clicked.connect(self.load_tasks)
-        layout.addWidget(refresh_btn)
         
         return panel
     

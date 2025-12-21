@@ -47,25 +47,34 @@ class TaskMatcher:
         """
         查找匹配的黄金路径
         
+        优先级：
+        1. 精确匹配快捷命令
+        2. 语义相似度匹配
+        
         Args:
             task_description: 任务描述
             
         Returns:
             匹配的黄金路径字典，如果没有匹配则返回 None
         """
-        # 1. 提取关键词
+        # 1. 优先精确匹配快捷命令
+        shortcut_match = self.repository.find_by_shortcut(task_description.strip())
+        if shortcut_match:
+            return shortcut_match
+        
+        # 2. 提取关键词
         keywords = self.extract_keywords(task_description)
         
         if not keywords:
             return None
         
-        # 2. 查询候选路径
+        # 3. 查询候选路径
         candidates = self._query_by_keywords(keywords)
         
         if not candidates:
             return None
         
-        # 3. 计算语义相似度
+        # 4. 计算语义相似度
         best_match = None
         best_score = 0.0
         
@@ -75,11 +84,21 @@ class TaskMatcher:
                 candidate['task_pattern']
             )
             
+            # 如果候选有快捷命令，也计算与快捷命令的相似度
+            shortcut = candidate.get('shortcut_command', '')
+            if shortcut:
+                shortcut_score = self.semantic_similarity(
+                    task_description,
+                    shortcut
+                )
+                # 取较高的分数
+                score = max(score, shortcut_score)
+            
             if score > best_score:
                 best_score = score
                 best_match = candidate
         
-        # 4. 阈值判断（降低到 0.6 以适应中文分词）
+        # 5. 阈值判断（降低到 0.6 以适应中文分词）
         if best_score >= 0.6:
             return best_match
         

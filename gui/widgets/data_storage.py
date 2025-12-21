@@ -526,6 +526,11 @@ class TaskHistoryDialog(QDialog):
         self.view_steps_btn.clicked.connect(self._show_steps_for_selected)
         btn_layout.addWidget(self.view_steps_btn)
 
+        self.delete_btn = QPushButton("🗑️ 删除选中")
+        self.delete_btn.setStyleSheet("background-color: #f44336; color: white;")
+        self.delete_btn.clicked.connect(self._delete_selected_task)
+        btn_layout.addWidget(self.delete_btn)
+
         btn_layout.addStretch()
 
         button_box = QDialogButtonBox(QDialogButtonBox.Close)
@@ -542,6 +547,74 @@ class TaskHistoryDialog(QDialog):
         if not session_item:
             return None
         return session_item.text() or None
+
+    def _delete_selected_task(self) -> None:
+        """Delete the selected task and its steps from database."""
+        session_id = self._get_selected_session_id()
+        if not session_id:
+            QMessageBox.information(
+                self,
+                "未选择任务",
+                "请先选择一条任务记录。",
+            )
+            return
+
+        # Get task description for confirmation
+        selected_row = self.table.currentRow()
+        desc_item = self.table.item(selected_row, 1)
+        task_desc = desc_item.text() if desc_item else "未知任务"
+
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除以下任务及其所有步骤吗？\n\n"
+            f"任务: {task_desc[:50]}...\n"
+            f"会话ID: {session_id[:20]}...\n\n"
+            f"此操作不可撤销！",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # Delete from database
+        try:
+            conn = sqlite3.connect(
+                str(DB_PATH),
+                check_same_thread=False,
+                timeout=5.0
+            )
+            conn.execute("PRAGMA journal_mode=WAL")
+            cur = conn.cursor()
+
+            # Delete steps first (foreign key)
+            cur.execute("DELETE FROM steps WHERE session_id = ?", (session_id,))
+            steps_deleted = cur.rowcount
+
+            # Delete task
+            cur.execute("DELETE FROM tasks WHERE session_id = ?", (session_id,))
+            task_deleted = cur.rowcount
+
+            conn.commit()
+            conn.close()
+
+            # Remove from table
+            self.table.removeRow(selected_row)
+
+            QMessageBox.information(
+                self,
+                "删除成功",
+                f"已删除任务及 {steps_deleted} 个步骤记录。"
+            )
+
+        except sqlite3.Error as e:
+            QMessageBox.critical(
+                self,
+                "删除失败",
+                f"删除任务时出错: {e}",
+            )
 
     def _show_steps_for_selected(self) -> None:
         session_id = self._get_selected_session_id()

@@ -137,9 +137,9 @@ class GoldenPathExtractor:
         提取正确的执行步骤
         
         从标注为 correct 的步骤中提取动作描述
+        返回不带序号的步骤描述列表
         """
         correct_steps = []
-        step_num = 0
         
         for step in steps:
             label = step.get('user_label', '')
@@ -148,12 +148,12 @@ class GoldenPathExtractor:
             if label != 'correct':
                 continue
             
-            step_num += 1
-            
             # 从动作中提取描述
             action_desc = self._action_to_description(step)
             if action_desc:
-                correct_steps.append(f"{step_num}. {action_desc}")
+                correct_steps.append(action_desc)
+        
+        return correct_steps
         
         return correct_steps
 
@@ -213,9 +213,12 @@ class GoldenPathExtractor:
     def _action_to_description(self, step: Dict) -> str:
         """
         将动作转换为人类可读的描述
+        
+        优化版：从 thinking 中提取更详细的描述
         """
         action_data = step.get('action', '')
         thinking = step.get('thinking', '')
+        message = step.get('message', '')
         
         # 尝试解析动作
         if isinstance(action_data, str):
@@ -226,27 +229,52 @@ class GoldenPathExtractor:
         
         if isinstance(action_data, dict):
             action_type = action_data.get('action', '')
+            metadata = action_data.get('_metadata', '')
+            
+            # 处理 finish 动作
+            if metadata == 'finish':
+                return "完成任务"
             
             if action_type == 'Launch':
                 app = action_data.get('app', '应用')
-                return f"启动{app}应用"
+                return f"打开{app}"
             
             elif action_type == 'Tap':
-                # 尝试从 thinking 中提取点击目标
-                target = self._extract_tap_target(thinking)
+                # 优先从 thinking 中提取点击目标的详细描述
+                target = self._extract_detailed_tap_target(thinking)
                 if target:
                     return f"点击{target}"
                 else:
                     element = action_data.get('element', '')
-                    return f"点击屏幕位置 {element}"
+                    return f"点击屏幕"
             
             elif action_type == 'Type':
                 text = action_data.get('text', '')
-                return f"输入文本: {text}"
+                return f"输入「{text}」"
             
             elif action_type == 'Swipe':
-                direction = action_data.get('direction', '')
-                return f"滑动屏幕 ({direction})"
+                # 从 thinking 中提取滑动目的
+                swipe_purpose = self._extract_swipe_purpose(thinking)
+                if swipe_purpose:
+                    return swipe_purpose
+                
+                # 根据坐标判断滑动方向
+                start = action_data.get('start', [0, 0])
+                end = action_data.get('end', [0, 0])
+                if len(start) >= 2 and len(end) >= 2:
+                    dy = end[1] - start[1]
+                    dx = end[0] - start[0]
+                    if abs(dy) > abs(dx):
+                        if dy < 0:
+                            return "向上滑动屏幕"
+                        else:
+                            return "向下滑动屏幕"
+                    else:
+                        if dx < 0:
+                            return "向左滑动屏幕"
+                        else:
+                            return "向右滑动屏幕"
+                return "滑动屏幕"
             
             elif action_type == 'Wait':
                 return "等待页面加载"
@@ -254,18 +282,88 @@ class GoldenPathExtractor:
             elif action_type == 'Back':
                 return "返回上一页"
             
+            elif action_type == 'Home':
+                return "返回桌面"
+            
             else:
-                return f"执行 {action_type}"
+                return f"执行{action_type}"
         
-        # 如果无法解析，尝试从 thinking 中提取
-        if thinking:
-            # 提取第一个动作描述
-            lines = thinking.split('\n')
-            for line in lines:
-                line = line.strip()
-                if '点击' in line or '启动' in line or '输入' in line:
-                    # 提取关键部分
-                    return self._extract_action_from_thinking(line)
+        return ""
+    
+    def _extract_detailed_tap_target(self, thinking: str) -> str:
+        """从 thinking 中提取详细的点击目标描述"""
+        if not thinking:
+            return ""
+        
+        # 模式1：直接提取"点击xxx"的目标
+        patterns = [
+            # 点击具体元素
+            r'点击[「"\'"]([^「"\'"\n,，。]+)[」"\'"]',
+            r'点击[「"\'"]?([^「"\'"\n,，。]{2,15})[」"\'"]?按钮',
+            r'点击[「"\'"]?([^「"\'"\n,，。]{2,15})[」"\'"]?选项',
+            r'点击[「"\'"]?([^「"\'"\n,，。]{2,15})[」"\'"]?开关',
+            # 位置描述
+            r'点击(第一个开关|第二个开关|顶部的|底部的|左侧的|右侧的)',
+            # 需要点击xxx来xxx
+            r'需要点击[「"\'"]?([^「"\'"\n,，。]{2,20})[」"\'"]?来',
+            r'需要点击[「"\'"]?([^「"\'"\n,，。]{2,20})[」"\'"]?按钮',
+            # 我需要点击
+            r'我需要点击[「"\'"]?([^「"\'"\n,，。]{2,15})[」"\'"]',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, thinking)
+            if match:
+                target = match.group(1).strip()
+                # 清理目标文本
+                target = re.sub(r'[（(].*?[）)]', '', target)
+                target = target.strip('，。,.')
+                if 2 <= len(target) <= 20:
+                    return target
+        
+        # 模式2：从"我找到了xxx"提取
+        found_patterns = [
+            r'找到了[「"\'"]?([^「"\'"\n,，。！]{2,15})[」"\'"]?[选项|按钮|开关]?',
+            r'看到[「"\'"]?([^「"\'"\n,，。！]{2,15})[」"\'"]?[选项|按钮]',
+        ]
+        
+        for pattern in found_patterns:
+            match = re.search(pattern, thinking)
+            if match:
+                target = match.group(1).strip()
+                if 2 <= len(target) <= 15:
+                    return target
+        
+        return ""
+    
+    def _extract_swipe_purpose(self, thinking: str) -> str:
+        """从 thinking 中提取滑动的目的"""
+        if not thinking:
+            return ""
+        
+        # 查找滑动目的的模式
+        patterns = [
+            r'向下滚动[来以]?查[看找]([^,，。\n]{2,15})',
+            r'向上滚动[来以]?查[看找]([^,，。\n]{2,15})',
+            r'滚动[来以]?查[看找]([^,，。\n]{2,15})',
+            r'滑动[来以]?[查看找]([^,，。\n]{2,15})',
+            r'继续向下滚动',
+            r'继续滚动',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, thinking)
+            if match:
+                if match.groups():
+                    purpose = match.group(1).strip()
+                    if purpose:
+                        return f"向下滑动查找{purpose}"
+                else:
+                    return "继续向下滑动"
+        
+        # 检查是否在查找某个选项
+        if '没有看到' in thinking or '还是没有' in thinking:
+            return "继续向下滑动查找"
         
         return ""
 
@@ -358,18 +456,19 @@ class GoldenPathExtractor:
 
     def _generate_simple_sop(self, correct_path: List[str], 
                              forbidden: List[str], hints: List[str]) -> str:
-        """生成简化的自然语言 SOP"""
+        """生成简化的自然语言 SOP - 带序号"""
         lines = []
         
         if correct_path:
             lines.append("【正确步骤】")
-            lines.extend(correct_path)
+            for i, step in enumerate(correct_path, 1):
+                lines.append(f"{i}. {step}")
             lines.append("")
         
         if forbidden:
             lines.append("【禁止操作】")
             for f in forbidden:
-                lines.append(f"❌ {f}")
+                lines.append(f"❌ 不要{f}")
             lines.append("")
         
         if hints:
