@@ -1,6 +1,7 @@
 """Task review and annotation widgets for Open-AutoGLM GUI."""
 
 import logging
+import sys
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -24,6 +25,16 @@ from gui.utils.task_logger import TaskLogger
 
 # 创建日志记录器
 logger = logging.getLogger(__name__)
+
+
+def _get_project_root() -> Path:
+    """Get the project root directory (Open-AutoGLM-main/)."""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled exe (dist/GUI.exe)
+        return Path(sys.executable).parent.parent
+    else:
+        # Running as script - gui/widgets/task_review.py
+        return Path(__file__).parent.parent.parent
 
 
 class StepPlayerWidget(QWidget):
@@ -266,19 +277,27 @@ class StepPlayerWidget(QWidget):
         
         # Load screenshot
         screenshot_path = step_data.get('screenshot_path')
-        if screenshot_path and Path(screenshot_path).exists():
-            pixmap = QPixmap(screenshot_path)
-            if not pixmap.isNull():
-                # Scale to fit while maintaining aspect ratio
-                scaled_pixmap = pixmap.scaled(
-                    self.screenshot_label.width() - 20,
-                    self.screenshot_label.height() - 20,
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
-                )
-                self.screenshot_label.setPixmap(scaled_pixmap)
+        if screenshot_path:
+            # Convert relative path to absolute path
+            screenshot_path = Path(screenshot_path)
+            if not screenshot_path.is_absolute():
+                screenshot_path = _get_project_root() / screenshot_path
+            
+            if screenshot_path.exists():
+                pixmap = QPixmap(str(screenshot_path))
+                if not pixmap.isNull():
+                    # Scale to fit while maintaining aspect ratio
+                    scaled_pixmap = pixmap.scaled(
+                        self.screenshot_label.width() - 20,
+                        self.screenshot_label.height() - 20,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    self.screenshot_label.setPixmap(scaled_pixmap)
+                else:
+                    self.screenshot_label.setText("无法加载截图")
             else:
-                self.screenshot_label.setText("无法加载截图")
+                self.screenshot_label.setText(f"截图文件不存在: {screenshot_path}")
         else:
             self.screenshot_label.setText("暂无截图")
         

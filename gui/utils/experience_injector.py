@@ -14,9 +14,18 @@ Experience Injector - 经验注入器
 import base64
 import json
 import sqlite3
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+
+
+def _get_project_root() -> Path:
+    """Get the project root directory (Open-AutoGLM-main/)."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent.parent
+    else:
+        return Path(__file__).parent.parent.parent
 
 
 @dataclass
@@ -112,13 +121,18 @@ class ExperienceInjector:
                 screenshot_base64 = None
                 screenshot_path = row['screenshot_path']
                 
-                # 尝试读取截图文件
-                if screenshot_path and Path(screenshot_path).exists():
-                    try:
-                        with open(screenshot_path, 'rb') as f:
-                            screenshot_base64 = base64.b64encode(f.read()).decode('utf-8')
-                    except Exception as e:
-                        print(f"读取截图失败: {e}")
+                # 尝试读取截图文件 (转换相对路径为绝对路径)
+                if screenshot_path:
+                    abs_path = Path(screenshot_path)
+                    if not abs_path.is_absolute():
+                        abs_path = _get_project_root() / screenshot_path
+                    
+                    if abs_path.exists():
+                        try:
+                            with open(abs_path, 'rb') as f:
+                                screenshot_base64 = base64.b64encode(f.read()).decode('utf-8')
+                        except Exception as e:
+                            print(f"读取截图失败: {e}")
                 
                 # 解析 action
                 action = {}
