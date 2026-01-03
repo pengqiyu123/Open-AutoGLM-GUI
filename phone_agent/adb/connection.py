@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from phone_agent.tool_paths import get_adb_path
+
 
 class ConnectionType(Enum):
     """Type of ADB connection."""
@@ -42,14 +44,14 @@ class ADBConnection:
         >>> conn.disconnect("192.168.1.100:5555")
     """
 
-    def __init__(self, adb_path: str = "adb"):
+    def __init__(self, adb_path: str | None = None):
         """
         Initialize ADB connection manager.
 
         Args:
-            adb_path: Path to ADB executable.
+            adb_path: Path to ADB executable (auto-detected if not provided).
         """
-        self.adb_path = adb_path
+        self.adb_path = adb_path or get_adb_path()
 
     def connect(self, address: str, timeout: int = 10) -> tuple[bool, str]:
         """

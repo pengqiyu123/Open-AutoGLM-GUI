@@ -17,6 +17,8 @@ from typing import Optional, Callable
 
 from PIL import Image
 
+from phone_agent.tool_paths import get_adb_path, get_hdc_path
+
 
 class DeviceMode(Enum):
     """Device connection mode."""
@@ -47,6 +49,7 @@ class DeviceManager:
         self,
         mode: DeviceMode = DeviceMode.ANDROID,
         device_id: Optional[str] = None,
+        adb_path: Optional[str] = None,
         hdc_path: Optional[str] = None,
     ):
         """
@@ -55,45 +58,29 @@ class DeviceManager:
         Args:
             mode: Device mode (ANDROID or HARMONYOS)
             device_id: Device ID for multi-device setups
+            adb_path: Custom ADB path (auto-detected if not provided)
             hdc_path: Custom HDC path (auto-detected if not provided)
         """
         self.mode = mode
         self.device_id = device_id
+        self._adb_path = adb_path
         self._hdc_path = hdc_path
+    
+    @property
+    def adb_path(self) -> str:
+        """Get ADB executable path."""
+        if self._adb_path:
+            return self._adb_path
+        self._adb_path = get_adb_path()
+        return self._adb_path
     
     @property
     def hdc_path(self) -> Optional[str]:
         """Get HDC executable path."""
         if self._hdc_path:
             return self._hdc_path
-        
-        # Auto-detect HDC path
-        import shutil
-        import os
-        
-        hdc_path = shutil.which("hdc")
-        if hdc_path:
-            self._hdc_path = hdc_path
-            return self._hdc_path
-        
-        # Try common paths
-        username = os.getenv("USERNAME", "")
-        common_paths = [
-            # Open-AutoGLM bundled HDC (recommended)
-            r"D:\python\Open-AutoGLM\toolchains\hdc.exe",
-            r".\toolchains\hdc.exe",
-            r"toolchains\hdc.exe",
-            # DevEco Studio default paths
-            r"D:\HuaWei\Sdk\20\toolchains\hdc.exe",
-            r"C:\HuaWei\Sdk\20\toolchains\hdc.exe",
-            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\12\toolchains\hdc.exe",
-        ]
-        for path in common_paths:
-            if os.path.exists(path):
-                self._hdc_path = path
-                return self._hdc_path
-        
-        return None
+        self._hdc_path = get_hdc_path()
+        return self._hdc_path
     
     def _get_cmd_prefix(self) -> list:
         """Get command prefix based on mode."""
@@ -104,9 +91,10 @@ class DeviceManager:
                 return [self.hdc_path, "-t", self.device_id]
             return [self.hdc_path]
         else:
+            adb = self.adb_path
             if self.device_id:
-                return ["adb", "-s", self.device_id]
-            return ["adb"]
+                return [adb, "-s", self.device_id]
+            return [adb]
     
     def get_screenshot(self, timeout: int = 10) -> Screenshot:
         """

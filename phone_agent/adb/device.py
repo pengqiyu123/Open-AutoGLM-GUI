@@ -6,6 +6,7 @@ import time
 from typing import List, Optional, Tuple
 
 from phone_agent.config.apps import APP_PACKAGES
+from phone_agent.tool_paths import get_adb_path
 
 
 def get_current_app(device_id: str | None = None) -> str:
@@ -249,6 +250,7 @@ def launch_app(app_name: str, device_id: str | None = None, delay: float = 1.0) 
 
 def _get_adb_prefix(device_id: str | None) -> list:
     """Get ADB command prefix with optional device specifier."""
+    adb = get_adb_path()
     if device_id:
-        return ["adb", "-s", device_id]
-    return ["adb"]
+        return [adb, "-s", device_id]
+    return [adb]

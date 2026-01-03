@@ -11,11 +11,9 @@ from typing import Optional
 # Common HDC installation paths on Windows
 HDC_COMMON_PATHS = [
     # Open-AutoGLM bundled HDC (recommended)
-    r"D:\python\Open-AutoGLM\toolchains\hdc.exe",
     r".\toolchains\hdc.exe",
     r"toolchains\hdc.exe",
     # DevEco Studio default paths
-    r"D:\HuaWei\Sdk\20\toolchains\hdc.exe",
     r"C:\HuaWei\Sdk\20\toolchains\hdc.exe",
     # User-specific paths
     r"C:\Users\{USERNAME}\AppData\Local\Huawei\Sdk\ohos\base\toolchains\hdc.exe",
@@ -25,9 +23,6 @@ HDC_COMMON_PATHS = [
     # Program Files paths
     r"C:\Program Files\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
     r"C:\Program Files (x86)\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
-    # Custom SDK paths
-    r"D:\DevEcoStudio\sdk\openharmony\toolchains\hdc.exe",
-    r"E:\HuaWei\Sdk\openharmony\toolchains\hdc.exe",
 ]
 
 

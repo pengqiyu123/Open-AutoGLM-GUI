@@ -4,6 +4,8 @@ import base64
 import subprocess
 from typing import Optional
 
+from phone_agent.tool_paths import get_adb_path
+
 
 def type_text(text: str, device_id: str | None = None) -> None:
     """
@@ -104,6 +106,7 @@ def restore_keyboard(ime: str, device_id: str | None = None) -> None:
 
 def _get_adb_prefix(device_id: str | None) -> list:
     """Get ADB command prefix with optional device specifier."""
+    adb = get_adb_path()
     if device_id:
-        return ["adb", "-s", device_id]
-    return ["adb"]
+        return [adb, "-s", device_id]
+    return [adb]

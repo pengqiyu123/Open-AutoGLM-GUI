@@ -27,6 +27,7 @@ from phone_agent.adb import ADBConnection, list_devices
 from phone_agent.agent import AgentConfig
 from phone_agent.config.apps import list_supported_apps
 from phone_agent.model import ModelConfig
+from phone_agent.tool_paths import get_adb_path
 
 
 def check_system_requirements() -> bool:
@@ -45,13 +46,15 @@ def check_system_requirements() -> bool:
     print("-" * 50)
 
     all_passed = True
+    adb_path = get_adb_path()
 
     # Check 1: ADB installed
     print("1. Checking ADB installation...", end=" ")
-    if shutil.which("adb") is None:
+    if adb_path == "adb" and shutil.which("adb") is None:
         print("❌ FAILED")
-        print("   Error: ADB is not installed or not in PATH.")
+        print("   Error: ADB is not installed or not found.")
         print("   Solution: Install Android SDK Platform Tools:")
+        print("     - 将 platform-tools 文件夹放入项目根目录")
         print("     - macOS: brew install android-platform-tools")
         print("     - Linux: sudo apt install android-tools-adb")
         print(
@@ -62,7 +65,7 @@ def check_system_requirements() -> bool:
         # Double check by running adb version
         try:
             result = subprocess.run(
-                ["adb", "version"], capture_output=True, text=True, timeout=10
+                [adb_path, "version"], capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
                 version_line = result.stdout.strip().split("\n")[0]
@@ -90,7 +93,7 @@ def check_system_requirements() -> bool:
     print("2. Checking connected devices...", end=" ")
     try:
         result = subprocess.run(
-            ["adb", "devices"], capture_output=True, text=True, timeout=10
+            [adb_path, "devices"], capture_output=True, text=True, timeout=10
         )
         lines = result.stdout.strip().split("\n")
         # Filter out header and empty lines, look for 'device' status
@@ -126,7 +129,7 @@ def check_system_requirements() -> bool:
     print("3. Checking ADB Keyboard...", end=" ")
     try:
         result = subprocess.run(
-            ["adb", "shell", "ime", "list", "-s"],
+            [adb_path, "shell", "ime", "list", "-s"],
             capture_output=True,
             text=True,
             timeout=10,

@@ -31,6 +31,7 @@ from PyQt5.QtWidgets import (
 
 from phone_agent.config.apps import APP_PACKAGES
 from phone_agent.adb import list_devices
+from phone_agent.tool_paths import get_adb_path
 
 
 def _get_logs_dir() -> Path:
@@ -392,9 +393,10 @@ class DataStorageWidget(QWidget):
     def _get_app_label(self, device_id: str, package_name: str) -> str:
         """Get app display label from package name via ADB."""
         try:
+            adb_path = get_adb_path()
             # Use dumpsys to get app label
             result = subprocess.run(
-                ["adb", "-s", device_id, "shell", "dumpsys", "package", package_name],
+                [adb_path, "-s", device_id, "shell", "dumpsys", "package", package_name],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -436,11 +438,12 @@ class DataStorageWidget(QWidget):
                 return
             
             device_id = connected[0].device_id
+            adb_path = get_adb_path()
             
             # Get package list via ADB (with app names using cmd package)
             # Try to get app names using 'cmd package list packages -3' with labels
             result = subprocess.run(
-                ["adb", "-s", device_id, "shell", "pm", "list", "packages", "-3"],
+                [adb_path, "-s", device_id, "shell", "pm", "list", "packages", "-3"],
                 capture_output=True,
                 text=True,
                 timeout=30,

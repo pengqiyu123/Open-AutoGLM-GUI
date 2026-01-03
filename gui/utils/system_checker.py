@@ -10,6 +10,7 @@ import requests
 from openai import OpenAI, DefaultHttpxClient
 
 from phone_agent.adb import list_devices
+from phone_agent.tool_paths import get_adb_path, get_hdc_path
 
 
 @dataclass
@@ -29,48 +30,18 @@ def check_hdc_installation() -> CheckResult:
     Returns:
         CheckResult with status and message.
     """
-    import os
-    
-    # Try to find HDC in PATH
-    hdc_path = shutil.which("hdc")
-    if not hdc_path:
-        # Try common HDC installation paths on Windows
-        username = os.getenv("USERNAME", "")
-        common_paths = [
-            # Open-AutoGLM bundled HDC (recommended)
-            r"D:\python\Open-AutoGLM\toolchains\hdc.exe",
-            r".\toolchains\hdc.exe",
-            r"toolchains\hdc.exe",
-            # DevEco Studio default paths
-            r"D:\HuaWei\Sdk\20\toolchains\hdc.exe",
-            r"C:\HuaWei\Sdk\20\toolchains\hdc.exe",
-            # User-specific paths
-            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\ohos\base\toolchains\hdc.exe",
-            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\10\toolchains\hdc.exe",
-            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\11\toolchains\hdc.exe",
-            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\12\toolchains\hdc.exe",
-            # Program Files paths
-            r"C:\Program Files\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
-            r"C:\Program Files (x86)\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
-            # Custom SDK paths
-            r"D:\DevEcoStudio\sdk\openharmony\toolchains\hdc.exe",
-            r"E:\HuaWei\Sdk\openharmony\toolchains\hdc.exe",
-        ]
-        for path in common_paths:
-            if os.path.exists(path):
-                hdc_path = path
-                break
+    hdc_path = get_hdc_path()
     
     if not hdc_path:
         return CheckResult(
             success=False,
-            message="HDC 未安装或不在 PATH 中",
-            details="HDC is not installed or not in PATH.",
+            message="HDC 未安装或未找到",
+            details="HDC is not installed or not found.",
             solution="安装 HarmonyOS SDK:\n"
-            "1. 下载并安装 DevEco Studio\n"
-            "2. 或从 https://developer.huawei.com/consumer/cn/deveco-studio/ 下载\n"
-            "3. HDC 工具通常位于 SDK 的 toolchains 目录下\n"
-            "4. 将 HDC 路径添加到系统 PATH 环境变量",
+            "1. 将 hdc.exe 放入项目 toolchains 目录\n"
+            "2. 或下载并安装 DevEco Studio\n"
+            "3. 或从 https://developer.huawei.com/consumer/cn/deveco-studio/ 下载\n"
+            "4. HDC 工具通常位于 SDK 的 toolchains 目录下",
         )
 
     try:
@@ -83,7 +54,7 @@ def check_hdc_installation() -> CheckResult:
         if result.returncode == 0:
             version_line = result.stdout.strip().split("\n")[0] if result.stdout.strip() else "HDC 已安装"
             return CheckResult(
-                success=True, message=f"HDC 已安装 ({version_line})", details=version_line
+                success=True, message=f"HDC 已安装 ({version_line})", details=f"路径: {hdc_path}"
             )
         else:
             # Try alternative: just list targets
@@ -95,7 +66,7 @@ def check_hdc_installation() -> CheckResult:
             )
             if result2.returncode == 0:
                 return CheckResult(
-                    success=True, message="HDC 已安装", details="HDC is available"
+                    success=True, message="HDC 已安装", details=f"路径: {hdc_path}"
                 )
             return CheckResult(
                 success=False,
@@ -123,25 +94,29 @@ def check_adb_installation() -> CheckResult:
     Returns:
         CheckResult with status and message.
     """
-    if shutil.which("adb") is None:
+    adb_path = get_adb_path()
+    
+    # Check if it's the default "adb" (not found)
+    if adb_path == "adb" and shutil.which("adb") is None:
         return CheckResult(
             success=False,
-            message="ADB 未安装或不在 PATH 中",
-            details="ADB is not installed or not in PATH.",
+            message="ADB 未安装或未找到",
+            details="ADB is not installed or not found.",
             solution="安装 Android SDK Platform Tools:\n"
-            "- macOS: brew install android-platform-tools\n"
-            "- Linux: sudo apt install android-tools-adb\n"
-            "- Windows: 从 https://developer.android.com/studio/releases/platform-tools 下载",
+            "1. 将 platform-tools 文件夹放入项目根目录\n"
+            "2. 或从 https://developer.android.com/studio/releases/platform-tools 下载\n"
+            "3. 或 macOS: brew install android-platform-tools\n"
+            "4. 或 Linux: sudo apt install android-tools-adb",
         )
 
     try:
         result = subprocess.run(
-            ["adb", "version"], capture_output=True, text=True, timeout=10
+            [adb_path, "version"], capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
             version_line = result.stdout.strip().split("\n")[0]
             return CheckResult(
-                success=True, message=f"ADB 已安装 ({version_line})", details=version_line
+                success=True, message=f"ADB 已安装 ({version_line})", details=f"路径: {adb_path}"
             )
         else:
             return CheckResult(
@@ -170,37 +145,7 @@ def check_hdc_devices() -> CheckResult:
     Returns:
         CheckResult with status and device list.
     """
-    import os
-    
-    # Find HDC executable
-    hdc_path = shutil.which("hdc")
-    if not hdc_path:
-        # Try common HDC installation paths on Windows
-        username = os.getenv("USERNAME", "")
-        common_paths = [
-            # Open-AutoGLM bundled HDC (recommended)
-            r"D:\python\Open-AutoGLM\toolchains\hdc.exe",
-            r".\toolchains\hdc.exe",
-            r"toolchains\hdc.exe",
-            # DevEco Studio default paths
-            r"D:\HuaWei\Sdk\20\toolchains\hdc.exe",
-            r"C:\HuaWei\Sdk\20\toolchains\hdc.exe",
-            # User-specific paths
-            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\ohos\base\toolchains\hdc.exe",
-            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\10\toolchains\hdc.exe",
-            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\11\toolchains\hdc.exe",
-            rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\openharmony\12\toolchains\hdc.exe",
-            # Program Files paths
-            r"C:\Program Files\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
-            r"C:\Program Files (x86)\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
-            # Custom SDK paths
-            r"D:\DevEcoStudio\sdk\openharmony\toolchains\hdc.exe",
-            r"E:\HuaWei\Sdk\openharmony\toolchains\hdc.exe",
-        ]
-        for path in common_paths:
-            if os.path.exists(path):
-                hdc_path = path
-                break
+    hdc_path = get_hdc_path()
     
     if not hdc_path:
         return CheckResult(
@@ -297,17 +242,10 @@ def check_devices() -> CheckResult:
 def check_adb_keyboard(device_id: Optional[str] = None) -> CheckResult:
     """
     Check if ADB Keyboard is installed on the device.
-
-    Args:
-        device_id: Optional device ID for multi-device setups.
-                  For WiFi/remote connections, device_id should be provided.
-
-    Returns:
-        CheckResult with status and message.
     """
-    # Check if device is selected (especially important for WiFi/remote connections)
+    adb_path = get_adb_path()
+    
     if not device_id:
-        # Try to get first connected device
         try:
             devices = list_devices()
             connected_devices = [d for d in devices if d.status == "device"]
@@ -320,7 +258,6 @@ def check_adb_keyboard(device_id: Optional[str] = None) -> CheckResult:
                     "2. 如果是无线连接，请确保设备已连接\n"
                     "3. 无线连接时建议先选择设备再检查",
                 )
-            # Use first connected device if no device_id provided
             device_id = connected_devices[0].device_id
         except Exception:
             return CheckResult(
@@ -332,20 +269,18 @@ def check_adb_keyboard(device_id: Optional[str] = None) -> CheckResult:
                 "3. 如果是无线连接，请先连接设备",
             )
 
-    adb_prefix = ["adb"]
+    adb_prefix = [adb_path]
     if device_id:
         adb_prefix.extend(["-s", device_id])
 
     try:
-        # Increased timeout for WiFi/remote connections (20 seconds)
         result = subprocess.run(
             adb_prefix + ["shell", "ime", "list", "-s"],
             capture_output=True,
             text=True,
-            timeout=20,  # Increased from 10 to 20 seconds for WiFi connections
+            timeout=20,
         )
         
-        # Check return code
         if result.returncode != 0:
             error_output = result.stderr.strip() or result.stdout.strip()
             if "device not found" in error_output.lower() or "offline" in error_output.lower():
@@ -386,26 +321,6 @@ def check_adb_keyboard(device_id: Optional[str] = None) -> CheckResult:
                 details=f"ADB Keyboard is installed on device: {device_id}",
             )
         else:
-            # Try alternative detection method: check if package is installed
-            try:
-                alt_result = subprocess.run(
-                    adb_prefix + ["shell", "pm", "list", "packages", "|", "grep", "adbkeyboard"],
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                )
-                if "adbkeyboard" in alt_result.stdout.lower():
-                    return CheckResult(
-                        success=True,
-                        message="ADB Keyboard 已安装（但可能未启用）",
-                        details="ADB Keyboard package found but may not be enabled.",
-                        solution="1. 在设置中启用 ADB Keyboard:\n"
-                        "   设置 > 系统 > 语言和输入法 > 虚拟键盘\n"
-                        "2. 确保 ADB Keyboard 已启用",
-                    )
-            except Exception:
-                pass  # Fall through to "not installed" message
-            
             return CheckResult(
                 success=False,
                 message="ADB Keyboard 未安装",
@@ -423,60 +338,17 @@ def check_adb_keyboard(device_id: Optional[str] = None) -> CheckResult:
             details=f"ADB command timed out after 20 seconds (device: {device_id})",
             solution="1. 如果是无线连接，网络可能较慢\n"
             "2. 检查网络连接质量\n"
-            "3. 尝试重新连接设备\n"
-            "4. 如果问题持续，可以手动确认 ADB Keyboard 是否已安装",
-        )
-    except FileNotFoundError:
-        return CheckResult(
-            success=False,
-            message="ADB 命令未找到",
-            details="ADB command not found.",
-            solution="1. 检查 ADB 是否已安装\n"
-            "2. 确认 ADB 在系统 PATH 中",
+            "3. 尝试重新连接设备",
         )
     except Exception as e:
-        error_msg = str(e)
-        # Check for specific connection errors
-        if "device not found" in error_msg.lower() or "offline" in error_msg.lower():
-            return CheckResult(
-                success=False,
-                message="设备未连接或已离线",
-                details=f"Device connection error: {error_msg}",
-                solution="1. 检查设备连接状态\n"
-                "2. 如果是无线连接，请重新连接\n"
-                "3. 尝试: adb devices 查看设备状态",
-            )
-        elif "connection" in error_msg.lower() or "connect" in error_msg.lower():
-            return CheckResult(
-                success=False,
-                message="无法连接到设备",
-                details=f"Connection error: {error_msg}",
-                solution="1. 检查设备连接\n"
-                "2. 如果是无线连接，检查网络连接\n"
-                "3. 确认设备 IP 和端口正确",
-            )
-        else:
-            return CheckResult(
-                success=False,
-                message=f"ADB Keyboard 检查出错: {error_msg}",
-                details=f"Error: {error_msg}",
-                solution="1. 检查设备连接\n"
-                "2. 确认设备已授权 ADB 调试\n"
-                "3. 如果是无线连接，可能需要更长时间",
-            )
+        return CheckResult(
+            success=False, message=f"ADB Keyboard 检查出错: {e}", details=str(e)
+        )
 
 
 def check_model_api(base_url: str, model_name: str, api_key: str = "EMPTY") -> CheckResult:
     """
-    Check if the model API is accessible using simple test like test_api.py.
-
-    Args:
-        base_url: The API base URL
-        model_name: The model name to check
-        api_key: The API key for authentication
-
-    Returns:
-        CheckResult with status and message.
+    Check if the model API is accessible.
     """
     if not base_url or not base_url.strip():
         return CheckResult(
@@ -494,29 +366,19 @@ def check_model_api(base_url: str, model_name: str, api_key: str = "EMPTY") -> C
                 details=f"Invalid URL format: {base_url}",
             )
 
-        # Use simple test like test_api.py (but disable system proxies to avoid localhost hijack)
         http_client = DefaultHttpxClient(timeout=30.0, trust_env=False)
         client = OpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         
-        # Try to get test messages from ModelScope (exact same as test_api.py)
         try:
             json_url = "https://modelscope.oss-cn-beijing.aliyuncs.com/phone_agent_test.json"
-            response_json = requests.get(json_url, timeout=10)  # Same as test_api.py
+            response_json = requests.get(json_url, timeout=10)
             messages = response_json.json()
         except Exception:
-            # If can't load test messages, use simple default (same as test_api.py fallback)
             messages = [
-                {
-                    "role": "system",
-                    "content": "你是一个智能助手。",
-                },
-                {
-                    "role": "user",
-                    "content": "请简单介绍一下你自己。",
-                },
+                {"role": "system", "content": "你是一个智能助手。"},
+                {"role": "user", "content": "请简单介绍一下你自己。"},
             ]
 
-        # Test API with simple chat completion (exact same as test_api.py)
         response = client.chat.completions.create(
             model=model_name,
             messages=messages,
@@ -526,141 +388,34 @@ def check_model_api(base_url: str, model_name: str, api_key: str = "EMPTY") -> C
         )
 
         content = response.choices[0].message.content
-        
-        # Test streaming response
-        streaming_supported = False
-        streaming_test_details = ""
-        try:
-            stream = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=100,  # Use smaller token limit for test
-                stream=True,
-            )
-            
-            chunk_count = 0
-            first_chunk_time = None
-            import time
-            start_time = time.time()
-            
-            for chunk in stream:
-                if chunk.choices and len(chunk.choices) > 0:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        chunk_count += 1
-                        if first_chunk_time is None:
-                            first_chunk_time = time.time() - start_time
-                        # Only check first few chunks to avoid long test
-                        if chunk_count >= 5:
-                            break
-            
-            if chunk_count > 0:
-                streaming_supported = True
-                streaming_test_details = f"\n流式响应: ✅ 支持 (收到 {chunk_count} 个chunk, 首个chunk延迟: {first_chunk_time:.2f}秒)"
-            else:
-                streaming_test_details = "\n流式响应: ⚠️ 未收到chunk"
-        except Exception as stream_error:
-            streaming_test_details = f"\n流式响应: ❌ 不支持 ({str(stream_error)[:50]})"
-        
         details = f"Connected to {base_url}\nModel: {model_name}\n测试响应: {content[:100]}..." if len(content) > 100 else f"Connected to {base_url}\nModel: {model_name}\n测试响应: {content}"
-        details += streaming_test_details
-        
-        message = "模型 API 连接成功"
-        if not streaming_supported:
-            message += " (流式响应可能不支持)"
         
         return CheckResult(
             success=True,
-            message=message,
+            message="模型 API 连接成功",
             details=details,
         )
     except Exception as e:
         error_msg = str(e)
         
-        # Check for authentication errors (401)
-        if "401" in error_msg or "unauthorized" in error_msg.lower() or "令牌已过期" in error_msg or "验证不正确" in error_msg:
+        if "401" in error_msg or "unauthorized" in error_msg.lower():
             return CheckResult(
                 success=False,
                 message="API Key 已过期或无效",
                 details=f"Authentication failed: {error_msg}",
                 solution="1. 检查 API Key 是否正确\n"
                 "2. 确认 API Key 是否已过期\n"
-                "3. 在对应平台重新申请 API Key\n"
-                "   - ModelScope: https://modelscope.cn\n"
-                "   - 智谱 BigModel: https://open.bigmodel.cn",
+                "3. 在对应平台重新申请 API Key",
             )
-        
-        # Check for connection errors
-        if "Connection refused" in error_msg or "Connection error" in error_msg or "cannot connect" in error_msg.lower() or "connect call failed" in error_msg.lower():
-            # Check if it's localhost/127.0.0.1
-            if "127.0.0.1" in error_msg or "localhost" in error_msg.lower():
-                return CheckResult(
-                    success=False,
-                    message="无法连接到本地服务",
-                    details=f"Cannot connect to local service: {error_msg}",
-                    solution="1. 检查模型配置中的 Base URL\n"
-                    "2. 确保使用正确的服务地址：\n"
-                    "   - ModelScope: https://api-inference.modelscope.cn/v1\n"
-                    "   - 智谱 BigModel: https://open.bigmodel.cn/api/paas/v4\n"
-                    "3. 如果确实需要本地服务，请确保服务正在运行",
-                )
-            else:
-                return CheckResult(
-                    success=False,
-                    message=f"无法连接到 {base_url}",
-                    details=f"Cannot connect to {base_url}: {error_msg}",
-                    solution="1. 检查模型服务器是否运行\n"
-                    "2. 验证 Base URL 是否正确\n"
-                    "3. 检查网络连接",
-                )
-        elif "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+        elif "Connection refused" in error_msg or "connect" in error_msg.lower():
             return CheckResult(
                 success=False,
-                message=f"连接到 {base_url} 超时",
-                details=f"Connection to {base_url} timed out",
-                solution="1. 检查网络连接\n" "2. 验证服务器是否响应",
+                message=f"无法连接到 {base_url}",
+                details=f"Cannot connect: {error_msg}",
+                solution="1. 检查模型服务器是否运行\n"
+                "2. 验证 Base URL 是否正确\n"
+                "3. 检查网络连接",
             )
-        elif (
-            "Name or service not known" in error_msg
-            or "nodename nor servname" in error_msg
-        ):
-            return CheckResult(
-                success=False,
-                message="无法解析主机名",
-                details="Cannot resolve hostname",
-                solution="1. 检查 URL 是否正确\n" "2. 验证 DNS 设置",
-            )
-        elif "404" in error_msg or "not found" in error_msg.lower():
-            return CheckResult(
-                success=False,
-                message=f"模型 '{model_name}' 未找到",
-                details=f"Model not found: {error_msg}",
-                solution=f"1. 检查模型名称 '{model_name}' 是否正确\n"
-                "2. 确认该模型是否在可用模型列表中",
-            )
-        elif "500" in error_msg or "internal error" in error_msg.lower():
-            # Check if it's trying to connect to localhost
-            if "127.0.0.1" in error_msg or "localhost" in error_msg.lower():
-                return CheckResult(
-                    success=False,
-                    message="本地服务连接失败",
-                    details=f"Local service connection failed: {error_msg}",
-                    solution="1. 检查模型配置中的 Base URL\n"
-                    "2. 确保使用正确的服务地址：\n"
-                    "   - ModelScope: https://api-inference.modelscope.cn/v1\n"
-                    "   - 智谱 BigModel: https://open.bigmodel.cn/api/paas/v4\n"
-                    "3. 如果确实需要本地服务，请确保服务正在运行",
-                )
-            else:
-                return CheckResult(
-                    success=False,
-                    message="模型服务内部错误",
-                    details=f"Model service error: {error_msg}",
-                    solution="1. 检查 Base URL 和 Model 名称是否正确\n"
-                    "2. API Key 是否有效\n"
-                    "3. 模型服务是否正常运行",
-                )
         else:
             return CheckResult(
                 success=False, message=f"API 检查出错: {error_msg}", details=error_msg
@@ -673,28 +428,13 @@ def run_all_checks(
     api_key: str = "EMPTY",
     device_id: Optional[str] = None,
 ) -> dict[str, CheckResult]:
-    """
-    Run all system checks and return results.
-
-    Args:
-        base_url: Model API base URL
-        model_name: Model name
-        api_key: API key
-        device_id: Optional device ID
-
-    Returns:
-        Dictionary mapping check names to CheckResult objects.
-    """
+    """Run all system checks and return results."""
     results = {}
 
-    # Check ADB installation
     results["adb"] = check_adb_installation()
 
-    # Check devices (only if ADB is installed)
     if results["adb"].success:
         results["devices"] = check_devices()
-
-        # Check ADB Keyboard (only if devices are connected)
         if results["devices"].success:
             results["keyboard"] = check_adb_keyboard(device_id)
     else:
@@ -705,7 +445,6 @@ def run_all_checks(
             success=False, message="跳过键盘检查（ADB 未安装）", details="Skipped"
         )
 
-    # Check model API
     if base_url and model_name:
         results["model_api"] = check_model_api(base_url, model_name, api_key)
     else:
@@ -716,4 +455,3 @@ def run_all_checks(
         )
 
     return results
-

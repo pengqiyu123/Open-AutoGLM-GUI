@@ -2,6 +2,8 @@
 
 基于 AutoGLM-Phone-9B 模型的手机自动化控制桌面端应用，支持 Android (ADB) 和 HarmonyOS (HDC)。
 
+> ⚠️ **重要提示**：本项目目前仅适配 **AutoGLM-Phone-9B** 云端 API，暂不支持其他模型。
+
 ## 功能特性
 
 ### 核心功能
@@ -47,6 +49,10 @@ python gui_app.py
 1. 在设置中填入模型 API 地址和密钥
 2. 连接手机并开启 USB 调试
 3. 点击"检测设备"确认连接成功
+
+## 模型适配说明
+
+⚠️ 本项目目前仅适配 **AutoGLM-Phone-9B** 云端 API。
 
 ## 项目结构
 ```

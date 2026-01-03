@@ -896,11 +896,9 @@ class MainWindow(QWidget):
         username = os.getenv("USERNAME", "")
         common_paths = [
             # Open-AutoGLM bundled HDC (recommended)
-            r"D:\python\Open-AutoGLM\toolchains\hdc.exe",
             r".\toolchains\hdc.exe",
             r"toolchains\hdc.exe",
             # DevEco Studio default paths
-            r"D:\HuaWei\Sdk\20\toolchains\hdc.exe",
             r"C:\HuaWei\Sdk\20\toolchains\hdc.exe",
             # User-specific paths
             rf"C:\Users\{username}\AppData\Local\Huawei\Sdk\ohos\base\toolchains\hdc.exe",
@@ -910,9 +908,6 @@ class MainWindow(QWidget):
             # Program Files paths
             r"C:\Program Files\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
             r"C:\Program Files (x86)\Huawei\DevEco Studio\sdk\openharmony\toolchains\hdc.exe",
-            # Custom SDK paths
-            r"D:\DevEcoStudio\sdk\openharmony\toolchains\hdc.exe",
-            r"E:\HuaWei\Sdk\openharmony\toolchains\hdc.exe",
         ]
         for path in common_paths:
             if os.path.exists(path):
