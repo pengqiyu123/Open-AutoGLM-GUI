@@ -1,4 +1,6 @@
-"""Main window for Open-AutoGLM GUI application."""
+"""
+Main window for Open-AutoGLM GUI application.
+"""
 
 import base64
 import json
@@ -10,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt5.QtCore import QObject, QSettings, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QFont, QIcon, QPainter, QColor
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -137,9 +139,10 @@ class MainWindow(QWidget):
             # If icon missing or invalid, skip silently
             pass
 
-        # Main layout
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        # Main layout - 改为垂直布局以支持底部声明
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(10, 10, 10, 5)
+        outer_layout.setSpacing(5)
 
         # Create splitter for resizable panels
         splitter = QSplitter(Qt.Horizontal)
@@ -159,7 +162,18 @@ class MainWindow(QWidget):
         # Set splitter sizes (30%, 30%, 40%)
         splitter.setSizes([300, 300, 400])
 
-        main_layout.addWidget(splitter)
+        outer_layout.addWidget(splitter)
+        
+        # 底部免责声明
+        disclaimer_label = QLabel(
+            "免责声明：本软件仅供学习研究，禁止用于违法活动。使用者应遵守法律法规，因滥用造成的后果由使用者自行承担。"
+        )
+        disclaimer_label.setAlignment(Qt.AlignCenter)
+        disclaimer_label.setStyleSheet(
+            "QLabel { color: #888; font-size: 11px; padding: 3px; background: transparent; }"
+        )
+        outer_layout.addWidget(disclaimer_label)
+        
         self._apply_styles()
 
     def _apply_styles(self):

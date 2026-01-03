@@ -80,6 +80,12 @@ class GoldenPathRepository:
             except:
                 cur.execute("ALTER TABLE golden_paths ADD COLUMN shortcut_command TEXT")
             
+            try:
+                cur.execute("SELECT completion_conditions FROM golden_paths LIMIT 1")
+            except:
+                cur.execute("ALTER TABLE golden_paths ADD COLUMN completion_conditions TEXT")
+                cur.execute("ALTER TABLE golden_paths ADD COLUMN shortcut_command TEXT")
+            
             # 创建索引
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_golden_paths_pattern
@@ -177,13 +183,13 @@ class GoldenPathRepository:
             
             return path_id
 
-    def update(self, path_id: int, golden_path) -> bool:
+    def update(self, path_id: int, data) -> bool:
         """
         更新黄金路径
         
         Args:
             path_id: 路径 ID
-            golden_path: GoldenPath 对象
+            data: GoldenPath 对象或字典
             
         Returns:
             是否更新成功
@@ -192,34 +198,83 @@ class GoldenPathRepository:
             conn = self._get_conn()
             cur = conn.cursor()
             
-            cur.execute("""
-                UPDATE golden_paths
-                SET task_pattern = ?,
-                    apps = ?,
-                    difficulty = ?,
-                    can_replay = ?,
-                    natural_sop = ?,
-                    action_sop = ?,
-                    common_errors = ?,
-                    success_rate = ?,
-                    usage_count = ?,
-                    source_sessions = ?,
-                    updated_at = ?
-                WHERE id = ?
-            """, (
-                golden_path.task_pattern,
-                json.dumps(golden_path.apps, ensure_ascii=False),
-                golden_path.difficulty,
-                1 if golden_path.can_replay else 0,
-                golden_path.natural_sop,
-                json.dumps(golden_path.action_sop, ensure_ascii=False),
-                json.dumps(golden_path.common_errors, ensure_ascii=False),
-                golden_path.success_rate,
-                golden_path.usage_count,
-                json.dumps(golden_path.source_sessions, ensure_ascii=False),
-                datetime.now().isoformat(),
-                path_id
-            ))
+            # 支持字典和对象两种格式
+            if isinstance(data, dict):
+                # 字典格式 - 只更新提供的字段
+                update_fields = []
+                update_values = []
+                
+                field_mapping = {
+                    'task_pattern': 'task_pattern',
+                    'apps': 'apps',
+                    'difficulty': 'difficulty',
+                    'can_replay': 'can_replay',
+                    'natural_sop': 'natural_sop',
+                    'action_sop': 'action_sop',
+                    'common_errors': 'common_errors',
+                    'correct_path': 'correct_path',
+                    'forbidden': 'forbidden',
+                    'hints': 'hints',
+                    'completion_conditions': 'completion_conditions',
+                    'success_rate': 'success_rate',
+                    'usage_count': 'usage_count',
+                    'source_sessions': 'source_sessions',
+                    'shortcut_command': 'shortcut_command',
+                    'updated_at': 'updated_at',
+                }
+                
+                for key, db_field in field_mapping.items():
+                    if key in data:
+                        update_fields.append(f"{db_field} = ?")
+                        value = data[key]
+                        # 处理布尔值
+                        if key == 'can_replay':
+                            value = 1 if value else 0
+                        update_values.append(value)
+                
+                if not update_fields:
+                    conn.close()
+                    return False
+                
+                # 确保 updated_at 被更新
+                if 'updated_at' not in data:
+                    update_fields.append("updated_at = ?")
+                    update_values.append(datetime.now().isoformat())
+                
+                update_values.append(path_id)
+                
+                sql = f"UPDATE golden_paths SET {', '.join(update_fields)} WHERE id = ?"
+                cur.execute(sql, update_values)
+            else:
+                # GoldenPath 对象格式（保持向后兼容）
+                cur.execute("""
+                    UPDATE golden_paths
+                    SET task_pattern = ?,
+                        apps = ?,
+                        difficulty = ?,
+                        can_replay = ?,
+                        natural_sop = ?,
+                        action_sop = ?,
+                        common_errors = ?,
+                        success_rate = ?,
+                        usage_count = ?,
+                        source_sessions = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (
+                    data.task_pattern,
+                    json.dumps(data.apps, ensure_ascii=False),
+                    data.difficulty,
+                    1 if data.can_replay else 0,
+                    data.natural_sop,
+                    json.dumps(data.action_sop, ensure_ascii=False),
+                    json.dumps(data.common_errors, ensure_ascii=False),
+                    data.success_rate,
+                    data.usage_count,
+                    json.dumps(data.source_sessions, ensure_ascii=False),
+                    datetime.now().isoformat(),
+                    path_id
+                ))
             
             success = cur.rowcount > 0
             conn.commit()
@@ -509,5 +564,10 @@ class GoldenPathRepository:
             result['shortcut_command'] = row['shortcut_command'] or ''
         except (KeyError, TypeError):
             result['shortcut_command'] = ''
+        
+        try:
+            result['completion_conditions'] = json.loads(row['completion_conditions']) if row['completion_conditions'] else []
+        except (KeyError, TypeError):
+            result['completion_conditions'] = []
         
         return result

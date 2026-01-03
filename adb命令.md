@@ -9,7 +9,7 @@ adb help      # 查看ADB帮助
 ## 二、查看设备
 ```bash
 adb devices   # 查看可连接操作的设备
-```
+```adb version
 
 ## 三、连接设备
 ```bash

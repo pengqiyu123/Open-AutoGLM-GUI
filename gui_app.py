@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""GUI application entry point for Open-AutoGLM."""
+"""
+GUI application entry point for Open-AutoGLM.
+
+免责声明：
+本软件仅供学习研究和个人合法用途，禁止用于任何违法违规活动。
+使用者应遵守当地法律法规，因使用本软件产生的任何后果由使用者自行承担。
+作者不对因滥用本软件造成的任何损失或法律责任负责。
+"""
 
 import os
 import shutil

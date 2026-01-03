@@ -4,11 +4,12 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional, List, Tuple
 
-from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtCore import Qt, QUrl, QThread, pyqtSignal
 from PyQt5.QtGui import QDesktopServices, QFont
 from PyQt5.QtWidgets import (
     QDialog,
@@ -19,6 +20,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -28,6 +30,7 @@ from PyQt5.QtWidgets import (
 )
 
 from phone_agent.config.apps import APP_PACKAGES
+from phone_agent.adb import list_devices
 
 
 def _get_logs_dir() -> Path:
@@ -160,6 +163,38 @@ class DataStorageWidget(QWidget):
 
         app_group.setLayout(app_layout)
         layout.addWidget(app_group)
+
+        # Phone app list module (read from connected device)
+        phone_app_group = QGroupBox("手机应用列表（包名）")
+        phone_app_layout = QVBoxLayout()
+        
+        # Refresh button
+        refresh_apps_btn = QPushButton("🔄 刷新应用列表")
+        refresh_apps_btn.clicked.connect(self._refresh_phone_apps)
+        phone_app_layout.addWidget(refresh_apps_btn)
+        
+        # Scroll area for app grid
+        self.phone_app_scroll = QScrollArea()
+        self.phone_app_scroll.setWidgetResizable(True)
+        self.phone_app_scroll.setMinimumHeight(200)
+        self.phone_app_scroll.setMaximumHeight(300)
+        
+        # Grid container for phone apps: 5 columns x 4 rows visible
+        self.phone_app_container = QWidget()
+        self.phone_app_grid = QGridLayout(self.phone_app_container)
+        self.phone_app_grid.setContentsMargins(4, 4, 4, 4)
+        self.phone_app_grid.setSpacing(4)
+        
+        self.phone_app_scroll.setWidget(self.phone_app_container)
+        phone_app_layout.addWidget(self.phone_app_scroll)
+        
+        # Status label
+        self.phone_app_status = QLabel("点击刷新按钮获取手机应用列表")
+        self.phone_app_status.setStyleSheet("color: #666; font-size: 11px;")
+        phone_app_layout.addWidget(self.phone_app_status)
+        
+        phone_app_group.setLayout(phone_app_layout)
+        layout.addWidget(phone_app_group)
 
         layout.addStretch()
 
@@ -353,6 +388,186 @@ class DataStorageWidget(QWidget):
         if not isinstance(app_name, str) or not app_name:
             return
         self.show_app_success_cases(app_name)
+
+    def _get_app_label(self, device_id: str, package_name: str) -> str:
+        """Get app display label from package name via ADB."""
+        try:
+            # Use dumpsys to get app label
+            result = subprocess.run(
+                ["adb", "-s", device_id, "shell", "dumpsys", "package", package_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            
+            if result.returncode == 0:
+                # Look for "applicationInfo" section and extract label
+                for line in result.stdout.split("\n"):
+                    line = line.strip()
+                    # Try to find label in various formats
+                    if "labelRes=" in line or "nonLocalizedLabel=" in line:
+                        # Extract nonLocalizedLabel if present
+                        if "nonLocalizedLabel=" in line:
+                            match = re.search(r'nonLocalizedLabel=([^\s]+)', line)
+                            if match:
+                                label = match.group(1)
+                                if label and label != "null":
+                                    return label
+            return ""
+        except Exception:
+            return ""
+
+    def _refresh_phone_apps(self) -> None:
+        """Refresh phone app list from connected device via ADB."""
+        self.phone_app_status.setText("正在获取应用列表...")
+        self.phone_app_status.setStyleSheet("color: #2196F3; font-size: 11px;")
+        
+        # Clear existing grid
+        self._clear_phone_app_grid()
+        
+        # Get connected devices
+        try:
+            devices = list_devices()
+            connected = [d for d in devices if d.status == "device"]
+            
+            if not connected:
+                self.phone_app_status.setText("❌ 未检测到已连接的设备")
+                self.phone_app_status.setStyleSheet("color: #f44336; font-size: 11px;")
+                return
+            
+            device_id = connected[0].device_id
+            
+            # Get package list via ADB (with app names using cmd package)
+            # Try to get app names using 'cmd package list packages -3' with labels
+            result = subprocess.run(
+                ["adb", "-s", device_id, "shell", "pm", "list", "packages", "-3"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            
+            if result.returncode != 0:
+                self.phone_app_status.setText(f"❌ 获取失败: {result.stderr}")
+                self.phone_app_status.setStyleSheet("color: #f44336; font-size: 11px;")
+                return
+            
+            # Parse packages (format: "package:com.example.app")
+            packages = []
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if line.startswith("package:"):
+                    pkg = line[8:]  # Remove "package:" prefix
+                    packages.append(pkg)
+            
+            if not packages:
+                self.phone_app_status.setText("未找到第三方应用")
+                self.phone_app_status.setStyleSheet("color: #666; font-size: 11px;")
+                return
+            
+            # Get app labels using a batch approach (faster than individual queries)
+            self.phone_app_status.setText(f"正在获取 {len(packages)} 个应用名称...")
+            
+            # Use 'cmd package list packages -3 -f' to get APK paths, then extract labels
+            # Alternative: use dumpsys package to get all labels at once
+            app_labels = {}
+            
+            # Try to get labels from APP_PACKAGES first (known apps)
+            for pkg in packages:
+                # Check if we have a known mapping
+                for app_name, app_pkg in APP_PACKAGES.items():
+                    if app_pkg == pkg:
+                        app_labels[pkg] = app_name
+                        break
+            
+            # For unknown apps, try to get label via aapt or dumpsys
+            # This is slow, so we'll use a simpler approach: extract from package name
+            for pkg in packages:
+                if pkg not in app_labels:
+                    # Try to extract a readable name from package
+                    # e.g., com.tencent.mm -> mm, com.example.myapp -> myapp
+                    parts = pkg.split(".")
+                    if len(parts) > 0:
+                        # Use last part as fallback name
+                        last_part = parts[-1]
+                        # Capitalize first letter
+                        app_labels[pkg] = last_part.capitalize() if last_part else pkg
+                    else:
+                        app_labels[pkg] = pkg
+            
+            # Sort by app label
+            sorted_packages = sorted(packages, key=lambda p: app_labels.get(p, p).lower())
+            
+            # Populate grid: 5 columns
+            max_columns = 5
+            row = 0
+            col = 0
+            
+            for pkg in sorted_packages:
+                app_name = app_labels.get(pkg, pkg)
+                
+                # Create label showing app name and package
+                display_text = f"{app_name}\n{pkg}"
+                if len(pkg) > 20:
+                    display_text = f"{app_name}\n{pkg[:17]}..."
+                
+                label = QLabel(display_text)
+                label.setToolTip(f"应用: {app_name}\n包名: {pkg}\n\n点击复制名称和包名")
+                label.setAlignment(Qt.AlignCenter)
+                label.setWordWrap(True)
+                label.setStyleSheet(
+                    "QLabel { background: #e3f2fd; border: 1px solid #90caf9; "
+                    "border-radius: 4px; padding: 6px 4px; font-size: 9px; "
+                    "min-width: 100px; min-height: 40px; }"
+                    "QLabel:hover { background: #bbdefb; }"
+                )
+                label.setCursor(Qt.PointingHandCursor)
+                label.setProperty("package_name", pkg)
+                label.setProperty("app_name", app_name)
+                label.mousePressEvent = lambda event, n=app_name, p=pkg: self._copy_app_info(n, p)
+                
+                self.phone_app_grid.addWidget(label, row, col)
+                
+                col += 1
+                if col >= max_columns:
+                    col = 0
+                    row += 1
+            
+            self.phone_app_status.setText(f"✅ 共 {len(packages)} 个第三方应用 (点击复制名称和包名)")
+            self.phone_app_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            
+        except subprocess.TimeoutExpired:
+            self.phone_app_status.setText("❌ 获取超时，请检查设备连接")
+            self.phone_app_status.setStyleSheet("color: #f44336; font-size: 11px;")
+        except Exception as e:
+            self.phone_app_status.setText(f"❌ 错误: {str(e)}")
+            self.phone_app_status.setStyleSheet("color: #f44336; font-size: 11px;")
+
+    def _clear_phone_app_grid(self) -> None:
+        """Clear all widgets from phone app grid."""
+        if not hasattr(self, "phone_app_grid"):
+            return
+        while self.phone_app_grid.count():
+            item = self.phone_app_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+
+    def _copy_package_name(self, package_name: str) -> None:
+        """Copy package name to clipboard."""
+        from PyQt5.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        clipboard.setText(package_name)
+        self.phone_app_status.setText(f"✅ 已复制: {package_name}")
+        self.phone_app_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
+
+    def _copy_app_info(self, app_name: str, package_name: str) -> None:
+        """Copy app name and package name to clipboard."""
+        from PyQt5.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        copy_text = f"{app_name}\n{package_name}"
+        clipboard.setText(copy_text)
+        self.phone_app_status.setText(f"✅ 已复制: {app_name} ({package_name[:20]}...)" if len(package_name) > 20 else f"✅ 已复制: {app_name} ({package_name})")
+        self.phone_app_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
 
     def open_log_folder(self) -> None:
         """Open the logs directory in system file explorer."""

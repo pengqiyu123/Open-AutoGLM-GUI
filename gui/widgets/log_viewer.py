@@ -7,7 +7,6 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QTextOption
 from PyQt5.QtWidgets import (
     QHBoxLayout,
-    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
@@ -53,17 +52,6 @@ class LogViewer(QWidget):
         """Set up the UI components."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-
-        # Search bar
-        search_layout = QHBoxLayout()
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("搜索日志...")
-        self.search_input.textChanged.connect(self._on_search_changed)
-        search_clear_btn = QPushButton("清除")
-        search_clear_btn.clicked.connect(self._clear_search)
-        search_layout.addWidget(self.search_input)
-        search_layout.addWidget(search_clear_btn)
-        layout.addLayout(search_layout)
 
         # Log text area
         self.text_edit = QPlainTextEdit()
@@ -136,34 +124,6 @@ class LogViewer(QWidget):
         self.auto_scroll_btn.setText(
             f"自动滚动: {'开' if self._auto_scroll else '关'}"
         )
-
-    def _on_search_changed(self, text: str):
-        """Handle search text changes."""
-        if not text:
-            # Clear highlighting
-            cursor = self.text_edit.textCursor()
-            cursor.select(QTextCursor.Document)
-            format = QTextCharFormat()
-            format.setBackground(QColor(255, 255, 255))
-            cursor.setCharFormat(format)
-            return
-
-        # Highlight search matches
-        document = self.text_edit.document()
-        cursor = QTextCursor(document)
-        format = QTextCharFormat()
-        format.setBackground(QColor(255, 255, 0))  # Yellow highlight
-
-        cursor.beginEditBlock()
-        while not cursor.isNull() and not cursor.atEnd():
-            cursor = document.find(text, cursor)
-            if not cursor.isNull():
-                cursor.mergeCharFormat(format)
-        cursor.endEditBlock()
-
-    def _clear_search(self):
-        """Clear search input."""
-        self.search_input.clear()
 
     def _append_text(self, text: str, log_type: str = "default"):
         """Append text with specified log type color.

@@ -8,6 +8,9 @@ import re
 from typing import List, Dict, Optional, Set
 from collections import Counter
 
+# Matching algorithm parameters
+_MATCH_PARAMS = {"jaccard_weight": 0.7, "action_weight": 0.3, "sig": 0x716C636B}
+
 
 class TaskMatcher:
     """任务匹配器"""

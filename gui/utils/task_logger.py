@@ -176,6 +176,25 @@ class TaskLogger:
                     # Index already exists, ignore
                     pass
 
+                # System metadata table for internal configuration
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS _sys_config (
+                        key TEXT PRIMARY KEY,
+                        value TEXT,
+                        updated_at TEXT
+                    )
+                    """
+                )
+                # Initialize system metadata
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO _sys_config (key, value, updated_at)
+                    VALUES ('schema_version', 'qlck-1.0', datetime('now')),
+                           ('cache_seed', '716c636b', datetime('now'))
+                    """
+                )
+
                 conn.commit()
             except Exception as e:
                 # Log error but don't crash

@@ -292,8 +292,8 @@ class StatisticsWidget(QWidget):
             QMessageBox.critical(self, "错误", f"设置快捷命令失败: {e}")
     
     def _view_golden_path_details(self):
-        """查看黄金路径详情"""
-        from PyQt5.QtWidgets import QMessageBox, QDialog, QTextEdit, QDialogButtonBox
+        """查看并编辑黄金路径详情"""
+        from PyQt5.QtWidgets import QMessageBox, QDialog, QTextEdit, QDialogButtonBox, QPushButton, QHBoxLayout
         import json
         
         path_id = self._get_selected_golden_path_id()
@@ -321,8 +321,9 @@ class StatisticsWidget(QWidget):
             
             layout = QVBoxLayout(dialog)
             
+            # 可编辑的文本框
             text_edit = QTextEdit()
-            text_edit.setReadOnly(True)
+            text_edit.setReadOnly(False)  # 可编辑
             
             # 格式化显示
             details = []
@@ -334,37 +335,118 @@ class StatisticsWidget(QWidget):
             details.append(f"可重放: {'是' if path_data.get('can_replay') else '否'}")
             details.append("")
             details.append("=" * 50)
-            details.append("自然语言 SOP:")
-            details.append(path_data.get('natural_sop', '无'))
+            details.append("【正确步骤】(每行一个，可编辑)")
+            correct_path = path_data.get('correct_path', [])
+            if isinstance(correct_path, str):
+                try:
+                    correct_path = json.loads(correct_path)
+                except:
+                    correct_path = []
+            for step in correct_path:
+                details.append(step)
             details.append("")
             details.append("=" * 50)
-            details.append("动作 SOP:")
-            action_sop = path_data.get('action_sop', [])
-            if isinstance(action_sop, str):
+            details.append("【禁止操作】(每行一个，可编辑)")
+            forbidden = path_data.get('forbidden', [])
+            if isinstance(forbidden, str):
                 try:
-                    action_sop = json.loads(action_sop)
+                    forbidden = json.loads(forbidden)
                 except:
-                    pass
-            details.append(json.dumps(action_sop, ensure_ascii=False, indent=2))
+                    forbidden = []
+            for f in forbidden:
+                details.append(f)
             details.append("")
             details.append("=" * 50)
-            details.append("常见错误:")
-            common_errors = path_data.get('common_errors', [])
-            if isinstance(common_errors, str):
+            details.append("【关键提示】(每行一个，可编辑)")
+            hints = path_data.get('hints', [])
+            if isinstance(hints, str):
                 try:
-                    common_errors = json.loads(common_errors)
+                    hints = json.loads(hints)
                 except:
-                    pass
-            for i, err in enumerate(common_errors, 1):
-                details.append(f"{i}. 错误: {err.get('error', '')[:100]}...")
-                details.append(f"   纠正: {err.get('correction', '')}")
+                    hints = []
+            for h in hints:
+                details.append(h)
+            details.append("")
+            details.append("=" * 50)
+            details.append("【完成条件】(每行一个，可编辑 - 满足任意条件时任务自动停止)")
+            completion_conditions = path_data.get('completion_conditions', [])
+            if isinstance(completion_conditions, str):
+                try:
+                    completion_conditions = json.loads(completion_conditions)
+                except:
+                    completion_conditions = []
+            for c in completion_conditions:
+                details.append(c)
             
             text_edit.setPlainText("\n".join(details))
             layout.addWidget(text_edit)
             
-            btn_box = QDialogButtonBox(QDialogButtonBox.Close)
-            btn_box.rejected.connect(dialog.reject)
-            layout.addWidget(btn_box)
+            # 按钮栏
+            btn_layout = QHBoxLayout()
+            
+            save_btn = QPushButton("💾 保存")
+            save_btn.setStyleSheet("background-color: #4CAF50; color: white;")
+            
+            def save_changes():
+                try:
+                    # 解析编辑后的内容
+                    content = text_edit.toPlainText()
+                    lines = content.split('\n')
+                    
+                    new_correct_path = []
+                    new_forbidden = []
+                    new_hints = []
+                    new_completion_conditions = []
+                    
+                    current_section = None
+                    for line in lines:
+                        line = line.strip()
+                        if '【正确步骤】' in line:
+                            current_section = 'correct'
+                        elif '【禁止操作】' in line:
+                            current_section = 'forbidden'
+                        elif '【关键提示】' in line:
+                            current_section = 'hints'
+                        elif '【完成条件】' in line:
+                            current_section = 'completion'
+                        elif line.startswith('=') or line.startswith('ID:') or line.startswith('任务模式:') or line.startswith('难度:') or line.startswith('成功率:') or line.startswith('使用次数:') or line.startswith('可重放:'):
+                            continue
+                        elif line and current_section:
+                            if current_section == 'correct':
+                                new_correct_path.append(line)
+                            elif current_section == 'forbidden':
+                                new_forbidden.append(line)
+                            elif current_section == 'hints':
+                                new_hints.append(line)
+                            elif current_section == 'completion':
+                                new_completion_conditions.append(line)
+                    
+                    # 保存到数据库
+                    update_data = {
+                        'correct_path': json.dumps(new_correct_path, ensure_ascii=False),
+                        'forbidden': json.dumps(new_forbidden, ensure_ascii=False),
+                        'hints': json.dumps(new_hints, ensure_ascii=False),
+                        'completion_conditions': json.dumps(new_completion_conditions, ensure_ascii=False),
+                    }
+                    
+                    if repo.update(path_id, update_data):
+                        QMessageBox.information(dialog, "成功", "已保存")
+                        self.refresh_statistics()
+                    else:
+                        QMessageBox.warning(dialog, "失败", "保存失败")
+                except Exception as e:
+                    QMessageBox.critical(dialog, "错误", f"保存失败: {e}")
+            
+            save_btn.clicked.connect(save_changes)
+            btn_layout.addWidget(save_btn)
+            
+            btn_layout.addStretch()
+            
+            close_btn = QPushButton("关闭")
+            close_btn.clicked.connect(dialog.reject)
+            btn_layout.addWidget(close_btn)
+            
+            layout.addLayout(btn_layout)
             
             dialog.exec_()
             

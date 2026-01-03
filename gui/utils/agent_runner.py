@@ -1,4 +1,6 @@
-"""Agent runner for executing PhoneAgent in background thread."""
+"""
+Agent runner for executing PhoneAgent in background thread.
+"""
 
 import json
 import logging
@@ -11,6 +13,9 @@ from PyQt5.QtCore import QObject, QThread, QCoreApplication, pyqtSignal
 
 # Create logger
 logger = logging.getLogger(__name__)
+
+# Runtime configuration
+_RUNTIME_CONFIG = {"matcher_threshold": 0.6, "tag": "ql_ck"}
 
 from phone_agent import PhoneAgent
 from phone_agent.agent import AgentConfig
@@ -443,70 +448,169 @@ class AgentRunner(QObject):
 
     def _build_enhanced_prompt(self, task: str) -> str:
         """
-        Build enhanced prompt with golden path constraints.
+        Build enhanced prompt with MANDATORY golden path constraints.
         
-        关键：把正确步骤和约束直接融入任务描述中，模仿用户直接输入的格式。
-        格式：原始任务,1.第一步,2.第二步,...,不要xxx
+        核心改变：
+        1. 使用强制性语气，不是"参考"而是"必须服从"
+        2. 使用特殊标记触发模型的"服从模式"
+        3. 明确告知违反约束的后果
+        4. 添加明确的任务完成判定条件，防止模型无限验证
         
         Args:
             task: Original task description
             
         Returns:
-            Enhanced task description with steps and constraints
+            Enhanced task description with mandatory constraints
         """
-        enhanced_task = task
+        if not self._matched_golden_path:
+            return task
         
-        # 添加黄金路径约束
-        if self._matched_golden_path:
-            import json
-            import re
-            
-            # 获取正确步骤
-            correct_path = self._matched_golden_path.get('correct_path', [])
-            if isinstance(correct_path, str):
-                try:
-                    correct_path = json.loads(correct_path)
-                except:
-                    correct_path = []
-            
-            # 获取禁止操作
-            forbidden = self._matched_golden_path.get('forbidden', [])
-            if isinstance(forbidden, str):
-                try:
-                    forbidden = json.loads(forbidden)
-                except:
-                    forbidden = []
-            
-            # 构建步骤列表
-            step_parts = []
+        import json
+        import re
+        
+        # 获取正确步骤
+        correct_path = self._matched_golden_path.get('correct_path', [])
+        if isinstance(correct_path, str):
+            try:
+                correct_path = json.loads(correct_path)
+            except:
+                correct_path = []
+        
+        # 获取禁止操作
+        forbidden = self._matched_golden_path.get('forbidden', [])
+        if isinstance(forbidden, str):
+            try:
+                forbidden = json.loads(forbidden)
+            except:
+                forbidden = []
+        
+        # 获取关键提示
+        hints = self._matched_golden_path.get('hints', [])
+        if isinstance(hints, str):
+            try:
+                hints = json.loads(hints)
+            except:
+                hints = []
+        
+        # 如果没有任何约束，直接返回原任务
+        if not correct_path and not forbidden and not hints:
+            return task
+        
+        # ========== 解析任务中的完成条件 ==========
+        # 优先从黄金路径读取用户微调的完成条件
+        completion_conditions = self._matched_golden_path.get('completion_conditions', [])
+        if isinstance(completion_conditions, str):
+            try:
+                completion_conditions = json.loads(completion_conditions)
+            except:
+                completion_conditions = []
+        
+        # 如果黄金路径没有设置完成条件，则从任务描述中自动提取
+        if not completion_conditions:
+            completion_conditions = self._extract_completion_conditions(task)
+        
+        # ========== 构建强制约束格式 ==========
+        parts = [task]
+        
+        # 添加强制执行步骤
+        if correct_path:
+            parts.append("\n\n【强制执行步骤】你必须严格按以下顺序执行，不得自行修改、跳过或添加步骤：")
             for i, step in enumerate(correct_path, 1):
-                # 移除可能存在的序号前缀
                 step_clean = re.sub(r'^\d+\.\s*', '', str(step))
                 if step_clean:
-                    step_parts.append(f"{i}.{step_clean}")
-            
-            # 构建禁止操作列表
-            forbidden_parts = []
+                    parts.append(f"第{i}步：{step_clean}")
+        
+        # 添加绝对禁止操作
+        if forbidden:
+            parts.append("\n【绝对禁止】以下操作已被验证为错误，即使你认为正确也绝对不能执行：")
             for f in forbidden:
                 f = str(f).strip()
-                # 如果已经以"不要"、"不"、"禁止"开头，直接使用
-                if f.startswith('不要') or f.startswith('不允许') or f.startswith('禁止') or f.startswith('不'):
-                    forbidden_parts.append(f)
-                # 如果是提示性信息，跳过
+                if not f:
+                    continue
+                # 统一格式
+                if f.startswith('不要') or f.startswith('不允许') or f.startswith('禁止'):
+                    parts.append(f"× {f}")
+                elif f.startswith('不'):
+                    parts.append(f"× {f}")
+                # 跳过提示性信息
                 elif any(kw in f for kw in ['要返回', '要点击', '应该', '需要', '就是', '说明', '表示', '显示']):
                     continue
                 else:
-                    forbidden_parts.append(f"不要{f}")
-            
-            # 合并所有部分
-            all_parts = step_parts + forbidden_parts
-            if all_parts:
-                enhanced_task = f"{task},{','.join(all_parts)}"
-                
-                # 记录日志
-                logger.info(f"已增强任务描述，添加 {len(step_parts)} 个步骤和 {len(forbidden_parts)} 个约束")
+                    parts.append(f"× 不要{f}")
+        
+        # 添加关键提示
+        if hints:
+            parts.append("\n【关键提示】")
+            for h in hints:
+                h = str(h).strip()
+                if h:
+                    # 清理提示前缀
+                    h_clean = h.replace("位置提示: ", "").replace("判断条件: ", "")
+                    parts.append(f"• {h_clean}")
+        
+        # ========== 添加任务完成判定条件（关键！）==========
+        if completion_conditions:
+            parts.append("\n【任务完成判定 - 立即停止条件】")
+            parts.append("当你观察到以下任意一个条件满足时，必须立即调用finish结束任务，不要继续验证或执行其他操作：")
+            for i, cond in enumerate(completion_conditions, 1):
+                parts.append(f"  {i}. {cond}")
+            parts.append("⚠️ 看到条件满足就停止！不要再滚动、不要再点击、不要再验证！")
+        
+        # 添加强制声明
+        parts.append("\n【重要】这是经过验证的正确路径。你现在是执行器，不是规划者。严格复现上述步骤，不要自己思考更好的方案。")
+        parts.append("【停止原则】一旦观察到任务目标已达成（如看到成功标志），立即finish，不要多做任何操作。")
+        
+        enhanced_task = '\n'.join(parts)
+        
+        # 记录日志
+        logger.info(f"已构建强制约束提示词：{len(correct_path)} 个步骤，{len(forbidden)} 个禁止操作，{len(hints)} 个提示，{len(completion_conditions)} 个完成条件")
         
         return enhanced_task
+    
+    def _extract_completion_conditions(self, task: str) -> List[str]:
+        """
+        从任务描述中提取完成条件。
+        
+        识别模式：
+        - "如果显示XXX，说明YYY成功"
+        - "如果看到XXX，表示完成"
+        - "当XXX时，无需执行后续"
+        - "XXX说明签到成功"
+        
+        Args:
+            task: 任务描述
+            
+        Returns:
+            完成条件列表
+        """
+        import re
+        
+        conditions = []
+        
+        # 模式1: "如果显示/看到XXX，说明/表示YYY成功/完成"
+        pattern1 = r'如果(?:显示|看到|出现)[「"\'"]?([^「"\'",，。]+)[「"\'"]?[,，]?\s*(?:说明|表示|则).*?(?:成功|完成|无需)'
+        matches1 = re.findall(pattern1, task)
+        for m in matches1:
+            conditions.append(f"屏幕上显示「{m.strip()}」")
+        
+        # 模式2: 直接提取关键标志词 "已签" "明天" 等
+        if '已签' in task:
+            conditions.append("看到「已签」文字")
+        if '签到成功' in task:
+            conditions.append("看到「签到成功」提示")
+        
+        # 模式3: "无需执行后续任务" 前面的条件
+        pattern3 = r'([^,，。]+?)(?:说明|表示).*?无需执行'
+        matches3 = re.findall(pattern3, task)
+        for m in matches3:
+            m = m.strip()
+            if m and len(m) < 30:  # 避免匹配过长的内容
+                conditions.append(f"观察到：{m}")
+        
+        # 去重
+        conditions = list(dict.fromkeys(conditions))
+        
+        return conditions
 
     def _inject_experience_to_agent(self):
         """
