@@ -65,9 +65,27 @@ python gui_app.py
 │   ├── actions/            # 动作处理
 │   ├── device/             # 设备控制 (ADB/HDC)
 │   └── model/              # 模型客户端
+├── platform-tools/         # Android ADB 工具（已内置）
+├── toolchains/             # HarmonyOS HDC 工具（已内置）
+├── ADBKeyboard.apk         # Android 输入法 APK
 ├── gui_app.py              # 入口文件
 └── requirements.txt        # 依赖列表
 ```
+
+## 内置工具说明
+
+### platform-tools (Android)
+项目已内置 Android SDK Platform Tools，包含 `adb.exe` 等工具，无需单独安装或配置环境变量。
+
+### toolchains (HarmonyOS)
+项目已内置 HarmonyOS SDK 工具链，包含 `hdc.exe`，用于连接和控制鸿蒙设备。
+
+### ADBKeyboard.apk
+Android 设备需要安装此输入法才能正常输入中文。安装方法：
+```bash
+adb install ADBKeyboard.apk
+```
+安装后需在手机 **设置 > 系统 > 语言和输入法 > 虚拟键盘** 中启用 ADB Keyboard。
 
 ## 使用说明
 
