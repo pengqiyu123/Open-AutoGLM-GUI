@@ -421,6 +421,16 @@ class StatisticsWidget(QWidget):
                             elif current_section == 'completion':
                                 new_completion_conditions.append(line)
                     
+                    # 检查 correct_path 是否被修改
+                    old_correct_path = path_data.get('correct_path', [])
+                    if isinstance(old_correct_path, str):
+                        try:
+                            old_correct_path = json.loads(old_correct_path)
+                        except:
+                            old_correct_path = []
+                    
+                    correct_path_changed = (new_correct_path != old_correct_path)
+                    
                     # 保存到数据库
                     update_data = {
                         'correct_path': json.dumps(new_correct_path, ensure_ascii=False),
@@ -429,8 +439,16 @@ class StatisticsWidget(QWidget):
                         'completion_conditions': json.dumps(new_completion_conditions, ensure_ascii=False),
                     }
                     
+                    # 如果 correct_path 被修改，清空 action_sop
+                    # 这样系统会回退到提示词约束模式，而不是使用旧的动作序列
+                    if correct_path_changed:
+                        update_data['action_sop'] = json.dumps([], ensure_ascii=False)
+                    
                     if repo.update(path_id, update_data):
-                        QMessageBox.information(dialog, "成功", "已保存")
+                        msg = "已保存"
+                        if correct_path_changed:
+                            msg += "\n\n⚠️ 检测到步骤修改，已清空动作序列。\n下次执行将使用提示词约束模式（由模型决策）。\n如需使用直接回放模式，请重新用教学模式录制。"
+                        QMessageBox.information(dialog, "成功", msg)
                         self.refresh_statistics()
                     else:
                         QMessageBox.warning(dialog, "失败", "保存失败")

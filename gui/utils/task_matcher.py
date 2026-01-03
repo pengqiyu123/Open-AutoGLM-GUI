@@ -60,8 +60,10 @@ class TaskMatcher:
         Returns:
             匹配的黄金路径字典，如果没有匹配则返回 None
         """
+        task_stripped = task_description.strip()
+        
         # 1. 优先精确匹配快捷命令
-        shortcut_match = self.repository.find_by_shortcut(task_description.strip())
+        shortcut_match = self.repository.find_by_shortcut(task_stripped)
         if shortcut_match:
             return shortcut_match
         

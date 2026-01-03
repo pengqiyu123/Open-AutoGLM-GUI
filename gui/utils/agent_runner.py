@@ -94,6 +94,12 @@ class AgentRunner(QObject):
         self._golden_path_id: Optional[int] = None
         self._experience_messages: List[Dict[str, Any]] = []  # 经验消息（包含错误截图）
         
+        # 状态机模式：步骤计数器和强制执行
+        self._current_step_index: int = 0  # 当前应该执行的步骤索引（从0开始）
+        self._golden_path_steps: List[Dict] = []  # 黄金路径的 action_sop
+        self._strict_mode: bool = False  # 是否启用严格模式（强制按步骤执行）
+        self._replay_mode: bool = False  # 是否启用直接回放模式（完全绕过模型）
+        
         # Initialize golden path components if available
         if GOLDEN_PATH_AVAILABLE and task_logger:
             try:
@@ -162,6 +168,12 @@ class AgentRunner(QObject):
         self._matched_golden_path = None
         self._golden_path_id = None
         self._experience_messages = []
+        
+        # 重置状态机
+        self._current_step_index = 0
+        self._golden_path_steps = []
+        self._strict_mode = False
+        self._replay_mode = False
 
         try:
             self.progress_updated.emit(f"开始执行任务: {task}")
@@ -175,16 +187,27 @@ class AgentRunner(QObject):
                     self._matched_golden_path = matched_path
                     self._golden_path_id = matched_path.get('id')
                     
-                    # 显示匹配信息
-                    similarity = self._task_matcher.semantic_similarity(
-                        task, matched_path['task_pattern']
-                    )
-                    self.progress_updated.emit(
-                        f"✅ 找到匹配的黄金路径 (相似度: {similarity:.1%})\n"
-                        f"   路径: {matched_path['task_pattern']}\n"
-                        f"   成功率: {matched_path.get('success_rate', 0):.1%}\n"
-                        f"   使用次数: {matched_path.get('usage_count', 0)}"
-                    )
+                    # 判断匹配方式：快捷命令 vs 语义相似度
+                    shortcut_cmd = matched_path.get('shortcut_command', '')
+                    if shortcut_cmd and shortcut_cmd.strip() == task.strip():
+                        # 快捷命令精确匹配
+                        self.progress_updated.emit(
+                            f"✅ 快捷命令匹配: 「{shortcut_cmd}」\n"
+                            f"   路径: {matched_path['task_pattern']}\n"
+                            f"   成功率: {matched_path.get('success_rate', 0):.1%}\n"
+                            f"   使用次数: {matched_path.get('usage_count', 0)}"
+                        )
+                    else:
+                        # 语义相似度匹配
+                        similarity = self._task_matcher.semantic_similarity(
+                            task, matched_path['task_pattern']
+                        )
+                        self.progress_updated.emit(
+                            f"✅ 找到匹配的黄金路径 (相似度: {similarity:.1%})\n"
+                            f"   路径: {matched_path['task_pattern']}\n"
+                            f"   成功率: {matched_path.get('success_rate', 0):.1%}\n"
+                            f"   使用次数: {matched_path.get('usage_count', 0)}"
+                        )
                     
                     # 显示约束信息
                     forbidden = matched_path.get('forbidden', [])
@@ -214,13 +237,42 @@ class AgentRunner(QObject):
                             self.progress_updated.emit(f"   📸 已加载 {error_count} 条错误示例（含截图）")
                         else:
                             self.progress_updated.emit("   ℹ️ 无历史错误截图")
+                    
+                    # ========== 加载 action_sop 启用状态机模式 ==========
+                    action_sop = matched_path.get('action_sop', [])
+                    # 确保 action_sop 是列表格式
+                    if isinstance(action_sop, str):
+                        try:
+                            action_sop = json.loads(action_sop)
+                        except:
+                            action_sop = []
+                    
+                    if action_sop and isinstance(action_sop, list) and len(action_sop) > 0:
+                        # 检查 action_sop 是否包含有效的动作数据
+                        valid_actions = [s for s in action_sop if s.get('action') and isinstance(s.get('action'), dict)]
+                        if valid_actions:
+                            self._golden_path_steps = valid_actions
+                            self._strict_mode = True
+                            self._replay_mode = True  # 启用直接回放模式
+                            self._current_step_index = 0
+                            self.progress_updated.emit(f"🔒 启用直接回放模式：共 {len(valid_actions)} 个预定义动作，将绕过模型决策")
+                        else:
+                            self.progress_updated.emit("   ℹ️ action_sop 无有效动作，使用提示词约束模式")
+                    else:
+                        self.progress_updated.emit("   ℹ️ 无预定义动作序列，使用提示词约束模式")
                 else:
                     self.progress_updated.emit("ℹ️ 未找到匹配的黄金路径，将正常执行任务")
             
             # ========== 执行任务 ==========
             self.progress_updated.emit("🚀 开始执行任务...")
             
-            result, is_success = self._run_task_with_capture(task)
+            # 根据模式选择执行方式
+            if self._replay_mode and self._golden_path_steps:
+                # 直接回放模式：绕过模型，直接执行黄金路径动作
+                result, is_success = self._run_replay_mode(task)
+            else:
+                # 正常模式：使用模型决策
+                result, is_success = self._run_task_with_capture(task)
             
             # Update golden path usage count and success rate if used
             # Do this atomically to ensure consistency
@@ -258,6 +310,127 @@ class AgentRunner(QObject):
             self._current_task = None
             self._matched_golden_path = None
             self._golden_path_id = None
+
+    def _run_replay_mode(self, task: str) -> tuple[str, bool]:
+        """
+        直接回放模式：绕过模型决策，直接按黄金路径的 action_sop 执行动作。
+        
+        这是 ChatGPT 思路中"状态机 + LLM"架构的简化实现：
+        - 动作选择权完全在本地（黄金路径）
+        - 不依赖模型的动作决策
+        - 模型只在需要时用于屏幕理解（可选）
+        
+        Args:
+            task: Task description (用于日志记录)
+            
+        Returns:
+            Tuple of (result_message, is_success)
+        """
+        from phone_agent.actions import ActionHandler
+        from phone_agent.device_manager import DeviceManager, DeviceMode
+        
+        self.progress_updated.emit("🎬 进入直接回放模式...")
+        
+        # 初始化设备管理器和动作处理器
+        try:
+            device_mode = DeviceMode.HARMONYOS if self.device_mode == "harmonyos" else DeviceMode.ANDROID
+            device_manager = DeviceManager(mode=device_mode, device_id=self.device_id)
+            action_handler = ActionHandler(
+                device_id=self.device_id,
+                device_manager=device_manager,
+            )
+        except Exception as e:
+            return (f"初始化设备失败: {e}", False)
+        
+        total_steps = len(self._golden_path_steps)
+        self.progress_updated.emit(f"📋 共 {total_steps} 个步骤待执行")
+        
+        # 逐步执行黄金路径动作
+        for step_idx, step_data in enumerate(self._golden_path_steps):
+            if self._should_stop:
+                return ("任务被用户停止", False)
+            
+            step_num = step_idx + 1
+            action = step_data.get('action', {})
+            
+            if not action:
+                self.progress_updated.emit(f"⚠️ 步骤 {step_num} 无有效动作，跳过")
+                continue
+            
+            # 获取动作描述
+            action_type = action.get('action', 'unknown')
+            action_desc = self._format_action_for_display(action)
+            
+            self.progress_updated.emit(f"▶ 执行步骤 {step_num}/{total_steps}: {action_desc}")
+            
+            # 截图获取屏幕尺寸
+            try:
+                screenshot = device_manager.get_screenshot()
+                screen_width = screenshot.width
+                screen_height = screenshot.height
+            except Exception as e:
+                self.progress_updated.emit(f"⚠️ 截图失败: {e}，使用默认尺寸")
+                screen_width = 1080
+                screen_height = 2400
+            
+            # 执行动作
+            try:
+                # 确保动作有 _metadata
+                if '_metadata' not in action:
+                    action['_metadata'] = 'do'
+                
+                result = action_handler.execute(action, screen_width, screen_height)
+                
+                if result.success:
+                    self.progress_updated.emit(f"   ✅ 步骤 {step_num} 成功")
+                    # 发送步骤完成信号
+                    self.step_completed.emit(step_num, True, result.message or "", "", "")
+                    self.action_received.emit(action)
+                else:
+                    self.progress_updated.emit(f"   ❌ 步骤 {step_num} 失败: {result.message}")
+                    self.step_completed.emit(step_num, False, result.message or "", "", "")
+                    # 继续执行，不中断
+                
+                # 检查是否是 finish 动作
+                if action.get('_metadata') == 'finish' or result.should_finish:
+                    return (result.message or "任务完成", True)
+                
+            except Exception as e:
+                self.progress_updated.emit(f"   ❌ 步骤 {step_num} 执行异常: {e}")
+                self.step_completed.emit(step_num, False, str(e), "", "")
+                # 继续执行，不中断
+            
+            # 步骤间延迟，等待界面响应
+            QThread.currentThread().msleep(500)
+        
+        # 所有步骤执行完成
+        self.progress_updated.emit(f"🎉 全部 {total_steps} 个步骤执行完成")
+        return (f"黄金路径回放完成，共执行 {total_steps} 步", True)
+    
+    def _format_action_for_display(self, action: dict) -> str:
+        """格式化动作用于显示"""
+        action_type = action.get('action', 'unknown')
+        
+        if action_type == 'Tap':
+            element = action.get('element', action.get('point', [0, 0]))
+            if isinstance(element, list) and len(element) >= 2:
+                return f"点击 ({element[0]}, {element[1]})"
+            return "点击屏幕"
+        elif action_type == 'Type':
+            text = action.get('text', '')
+            return f"输入「{text[:20]}{'...' if len(text) > 20 else ''}」"
+        elif action_type == 'Launch':
+            return f"打开应用「{action.get('app', '')}」"
+        elif action_type == 'Swipe':
+            return "滑动屏幕"
+        elif action_type == 'Back':
+            return "返回"
+        elif action_type == 'Home':
+            return "回到桌面"
+        elif action_type == 'Wait':
+            return "等待"
+        else:
+            return f"{action_type}"
 
     def _run_task_with_capture(self, task: str) -> tuple[str, bool]:
         """
@@ -455,6 +628,8 @@ class AgentRunner(QObject):
         2. 使用特殊标记触发模型的"服从模式"
         3. 明确告知违反约束的后果
         4. 添加明确的任务完成判定条件，防止模型无限验证
+        5. 强调必须执行完所有步骤才能完成
+        6. 在严格模式下，告诉模型当前是第几步
         
         Args:
             task: Original task description
@@ -512,41 +687,62 @@ class AgentRunner(QObject):
         # ========== 构建强制约束格式 ==========
         parts = [task]
         
-        # 添加强制执行步骤
+        # 添加强制执行步骤 - 更强的约束
         if correct_path:
-            parts.append("\n\n【强制执行步骤】你必须严格按以下顺序执行，不得自行修改、跳过或添加步骤：")
+            total_steps = len(correct_path)
+            
+            # 严格模式下，显示当前进度
+            if self._strict_mode:
+                current = self._current_step_index + 1
+                parts.append(f"\n\n⚠️【严格执行模式 - 当前第{current}步/共{total_steps}步】")
+                parts.append(f"系统会自动校验你的动作，不符合的动作会被强制替换。")
+            else:
+                parts.append(f"\n\n⚠️【强制执行模式 - 共{total_steps}步】")
+            
+            parts.append(f"你必须严格按以下顺序执行全部{total_steps}个步骤，每次只执行一步：")
             for i, step in enumerate(correct_path, 1):
                 step_clean = re.sub(r'^\d+\.\s*', '', str(step))
                 if step_clean:
-                    parts.append(f"第{i}步：{step_clean}")
+                    # 标记当前步骤
+                    if self._strict_mode and i == self._current_step_index + 1:
+                        parts.append(f"  ▶ 第{i}步：{step_clean} 【当前应执行】")
+                    else:
+                        parts.append(f"  第{i}步：{step_clean}")
+            
+            # 强调必须执行完所有步骤
+            parts.append(f"\n🚫【禁止提前完成】")
+            parts.append(f"- 你必须执行完全部{total_steps}步才能调用finish")
+            parts.append(f"- 即使你认为任务已完成，也必须继续执行剩余步骤")
+            parts.append(f"- 不要自己判断任务是否完成，严格按步骤执行")
+            parts.append(f"- 不要用Wait替代任何步骤，每一步都必须执行实际操作")
         
         # 添加绝对禁止操作
         if forbidden:
-            parts.append("\n【绝对禁止】以下操作已被验证为错误，即使你认为正确也绝对不能执行：")
+            parts.append("\n❌【绝对禁止 - 违反将导致任务失败】")
             for f in forbidden:
                 f = str(f).strip()
                 if not f:
                     continue
                 # 统一格式
                 if f.startswith('不要') or f.startswith('不允许') or f.startswith('禁止'):
-                    parts.append(f"× {f}")
+                    parts.append(f"  × {f}")
                 elif f.startswith('不'):
-                    parts.append(f"× {f}")
+                    parts.append(f"  × {f}")
                 # 跳过提示性信息
                 elif any(kw in f for kw in ['要返回', '要点击', '应该', '需要', '就是', '说明', '表示', '显示']):
                     continue
                 else:
-                    parts.append(f"× 不要{f}")
+                    parts.append(f"  × 不要{f}")
         
         # 添加关键提示
         if hints:
-            parts.append("\n【关键提示】")
+            parts.append("\n💡【关键提示】")
             for h in hints:
                 h = str(h).strip()
                 if h:
                     # 清理提示前缀
                     h_clean = h.replace("位置提示: ", "").replace("判断条件: ", "")
-                    parts.append(f"• {h_clean}")
+                    parts.append(f"  • {h_clean}")
         
         # ========== 添加任务完成判定条件（关键！）==========
         if completion_conditions:

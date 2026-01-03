@@ -56,6 +56,7 @@ class DataStorageWidget(QWidget):
     def __init__(self, task_logger=None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.task_logger = task_logger
+        self._teaching_mode_widget = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -82,7 +83,21 @@ class DataStorageWidget(QWidget):
             statistics_tab = StatisticsWidget(self.task_logger)
             tab_widget.addTab(statistics_tab, "统计分析")
         
+        # Tab 4: Teaching mode (human-AI collaborative learning)
+        if self.task_logger:
+            from gui.widgets.teaching_mode import TeachingModeWidget
+            self._teaching_mode_widget = TeachingModeWidget(self.task_logger)
+            tab_widget.addTab(self._teaching_mode_widget, "教学模式")
+        
         layout.addWidget(tab_widget)
+    
+    def set_teaching_mode_config(self, base_url: str, model_name: str, api_key: str,
+                                  device_id: str = None, device_mode: str = "android"):
+        """Set configuration for teaching mode widget."""
+        if self._teaching_mode_widget:
+            self._teaching_mode_widget.set_config(
+                base_url, model_name, api_key, device_id, device_mode
+            )
     
     def _create_overview_tab(self) -> QWidget:
         """Create the data overview tab."""

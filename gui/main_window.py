@@ -593,6 +593,11 @@ class MainWindow(QWidget):
                 self.api_key_input.setText("")
         else:
             self.api_key_input.setText("")
+        
+        # Update teaching mode config after loading settings
+        # Use QTimer to ensure widgets are fully initialized
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(100, self._update_teaching_mode_config)
 
     def _save_settings(self):
         """Save current settings."""
@@ -612,6 +617,23 @@ class MainWindow(QWidget):
         else:
             self.settings.setValue("remember_api_key", False)
             self.settings.setValue("api_key", "")
+        
+        # Update teaching mode config
+        self._update_teaching_mode_config()
+    
+    def _update_teaching_mode_config(self):
+        """Update teaching mode widget with current configuration."""
+        if hasattr(self, 'data_storage_widget') and self.data_storage_widget:
+            base_url = self.base_url_input.text().strip()
+            model_name = self.model_input.text().strip()
+            api_key = self.api_key_input.text().strip()
+            device_id = getattr(self, 'selected_device_id', None)
+            mode = self.device_mode_combo.currentText()
+            device_mode = "harmonyos" if "鸿蒙" in mode else "android"
+            
+            self.data_storage_widget.set_teaching_mode_config(
+                base_url, model_name, api_key, device_id, device_mode
+            )
     
     def _encrypt_api_key(self, api_key: str) -> str:
         """
