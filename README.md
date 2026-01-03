@@ -1,37 +1,87 @@
-# Open-AutoGLM-GUI 备份版
+# Open-AutoGLM-GUI
 
-本文档为当前仓库定制说明，原始 README 已移除，请按此文档使用。
+基于 AutoGLM-Phone-9B 模型的手机自动化控制桌面端应用，支持 Android (ADB) 和 HarmonyOS (HDC)。
 
-## 项目简介
-- 基于 Open-AutoGLM 的备份与二次开发基线，便于本地验证、演示和后续移植。
-- 包含 Python 版 Phone Agent（多模态屏幕理解 + ADB 控制）及简易 PyQt5 GUI 启动入口。
-- 适合作为 Android 端移植或功能扩展的参考实现。
+## 功能特性
 
-## 主要组成
-- `phone_agent/`：核心代理、动作处理、ADB/截图/输入封装、配置与模型客户端。
-- `gui/`：简易 PyQt5 窗口与工具；`gui_app.py` 为入口。
-- `scripts/`：部署/检查脚本与示例消息。
-- `resources/`：示例截图与隐私/说明文档。
-- `build_gui.*`：GUI 打包相关脚本和 spec。
+### 核心功能
+- 🤖 **AI驱动自动化** - 使用多模态大模型理解屏幕内容并执行操作
+- 📱 **双平台支持** - 同时支持 Android (ADB) 和 HarmonyOS (HDC) 设备
+- 🎯 **黄金路径系统** - 记录成功执行路径，提升重复任务成功率
+- 🧠 **心智捷径** - 快捷命令触发常用任务
+- 📊 **任务统计** - 查看历史任务执行情况和成功率
+
+### 黄金路径增强
+- **任务完成条件判定** - 自动识别任务完成标志，避免模型无限验证
+- **用户可编辑** - 支持手动微调正确步骤、禁止操作、关键提示和完成条件
+- **强制约束模式** - 使用强制性语气确保模型严格遵循黄金路径
+
+### 任务审核
+- 📝 **执行记录** - 完整记录每次任务的思考过程和操作步骤
+- 🖼️ **截图回放** - 查看每一步的屏幕截图
+- ✅ **人工审核** - 标记任务成功/失败，用于优化黄金路径
 
 ## 快速开始
+
+### 环境要求
+- Python 3.10+
+- PyQt5
+- ADB (Android) 或 HDC (HarmonyOS) 工具
+
+### 安装
 ```bash
+# 克隆仓库
+git clone https://github.com/pengqiyu123/Open-AutoGLM-GUI.git
+cd Open-AutoGLM-GUI
+
 # 安装依赖
 pip install -r requirements.txt
-
-# 运行示例 GUI
-python gui_app.py
-
-# 直接运行核心 agent（示例）
-python main.py
 ```
 
-## 注意事项
-- 默认使用 ADB 控制真实或模拟 Android 设备，请确保已开启开发者模式与 USB 调试。
-- 请遵守相关法律法规，仅用于学习与研究场景。
+### 运行
+```bash
+python gui_app.py
+```
 
-## 致谢与引用
-本项目的设计思路与部分实现借鉴自原项目 **Open-AutoGLM**：
-- https://github.com/zai-org/Open-AutoGLM
+### 配置
+1. 在设置中填入模型 API 地址和密钥
+2. 连接手机并开启 USB 调试
+3. 点击"检测设备"确认连接成功
 
-保留 MIT 许可证（见 `LICENSE`）。
+## 项目结构
+```
+├── gui/                    # GUI 界面
+│   ├── main_window.py      # 主窗口
+│   ├── widgets/            # UI 组件
+│   └── utils/              # 工具类
+├── phone_agent/            # 核心代理
+│   ├── agent.py            # Agent 主逻辑
+│   ├── actions/            # 动作处理
+│   ├── device/             # 设备控制 (ADB/HDC)
+│   └── model/              # 模型客户端
+├── gui_app.py              # 入口文件
+└── requirements.txt        # 依赖列表
+```
+
+## 使用说明
+
+### 黄金路径
+黄金路径是经过验证的成功执行路径，包含：
+- **正确步骤** - 按顺序执行的操作列表
+- **禁止操作** - 已验证为错误的操作
+- **关键提示** - 帮助模型理解的上下文信息
+- **完成条件** - 任务完成的判定标志（如"看到已签文字"）
+
+### 心智捷径
+为常用任务设置快捷命令，如：
+- `签到` → 打开腾讯视频签到
+- `抖音点赞` → 打开抖音给指定用户点赞
+
+## 免责声明
+本软件仅供学习研究和个人合法用途，禁止用于任何违法违规活动。使用者应遵守当地法律法规，因使用本软件产生的任何后果由使用者自行承担。
+
+## 致谢
+本项目基于 [Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM) 开发。
+
+## License
+MIT License
